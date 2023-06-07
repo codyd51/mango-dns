@@ -62,6 +62,48 @@ impl TryFrom<usize> for DnsOpcode {
 }
 
 #[derive(Debug)]
+enum DnsQueryType {
+    A = 1,
+    AAAA = 28,
+    Pointer = 12,
+    SVCB = 64,
+    StartOfAuthority = 6,
+    Https = 65,
+}
+
+impl TryFrom<usize> for DnsQueryType {
+    type Error = usize;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::A),
+            28 => Ok(Self::AAAA),
+            12 => Ok(Self::Pointer),
+            64 => Ok(Self::SVCB),
+            6 => Ok(Self::StartOfAuthority),
+            65 => Ok(Self::Https),
+            _ => Err(value),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum DnsQueryClass {
+    In = 1,
+}
+
+impl TryFrom<usize> for DnsQueryClass {
+    type Error = usize;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::In),
+            _ => Err(value),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct DnsPacketHeaderRaw(BitArray<[u16; 6], Msb0>);
 
 /// Returns the number of bits in `count` u16s
@@ -131,7 +173,7 @@ impl DnsPacketHeaderRaw {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct ResponseFields {
     is_authority: bool,
     is_recursion_available: bool,
@@ -152,7 +194,7 @@ impl ResponseFields {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum PacketDirection {
     Query,
     Response(ResponseFields),
@@ -322,6 +364,14 @@ impl<'a> DnsQueryParser<'a> {
         }
 
         name_components.join(".")
+    }
+
+    fn parse_query_type(&mut self) -> DnsQueryType {
+        DnsQueryType::try_from(self.parse_u16()).unwrap_or_else(|v| panic!("{v} is not a known query type"))
+    }
+
+    fn parse_query_class(&mut self) -> DnsQueryClass {
+        DnsQueryClass::try_from(self.parse_u16()).unwrap_or_else(|v| panic!("{v} is not a known query class"))
     }
 }
         }
