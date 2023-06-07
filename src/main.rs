@@ -490,6 +490,12 @@ impl DnsQueryWriter {
 }
 
 fn main() -> std::io::Result<()> {
+
+    let mut writer = DnsQueryWriter::new_answer(0x669f, 300);
+    writer.write();
+    println!("{:02X?}", writer.output_packet);
+    //return Ok(());
+
     // Ensure the packet header is defined correctly
     let dns_packet_header_size = mem::size_of::<DnsPacketHeaderRaw>();
     assert_eq!(dns_packet_header_size, 12);
@@ -502,18 +508,32 @@ fn main() -> std::io::Result<()> {
         vec![17, 197, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 11, 97, 110, 110, 111, 116, 97, 116, 105, 111, 110, 115, 6, 107, 97, 112, 101, 108, 105, 3, 99, 111, 109, 0, 0, 28, 0, 1],
     ];
 
-    //let socket = UdpSocket::bind("127.0.0.1:53")?;
+    let socket = UdpSocket::bind("127.0.0.1:53")?;
 
     // Receives a single datagram message on the socket. If `buf` is too small to hold
     // the message, it will be cut off.
     // Set the buffer size to the MTU so we won't truncate packets
     let mut packet_buffer = [0; 1500];
+    let mut i = 0;
     loop {
-
-        let test_packet = &test_packets[3];
+        /*
+        let test_packet = &test_packets[i];
+        i += 1;
+        if i >= test_packets.len() {
+            break;
+        }
         let packet_size = test_packet.len();
         packet_buffer[..test_packet.len()].copy_from_slice(test_packet);
-        //let (packet_size, src) = socket.recv_from(&mut packet_buffer)?;
+         */
+        let (packet_size, src) = socket.recv_from(&mut packet_buffer)?;
+
+        /*
+        let mut writer = DnsQueryWriter::new_answer(0x669f, 300);
+        writer.write();
+        println!("{:02X?}", writer.output_packet);
+        socket.send_to(&writer.output_packet, &src).unwrap();
+        return Ok(());
+        */
 
         let packet_data = &packet_buffer[..packet_size];
         //println!("packet data {packet_data:?}");
@@ -523,58 +543,61 @@ fn main() -> std::io::Result<()> {
             &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
         };
         let header = DnsPacketHeader::from(header_raw);
-        println!("Got header {header}");
+        println!("{header}");
+        /*
+        println!("header bytes: {header_data:?}");
+        for b in header_data.iter() {
+            print!("{b:#02x}, ");
+        }
+        println!();
+        */
 
         let body = &packet_data[dns_packet_header_size..];
-        println!("packet body {body:?}");
-        let mut cursor = 0;
+        //println!("packet body {body:?} opcode {:?}", header.opcode);
+        let mut body_parser = DnsQueryParser::new(body);
         match header.opcode {
             DnsOpcode::Query => {
                 println!("Handling DNS query");
                 for i in 0..header.question_count {
                     println!("Handling question #{i}");
+                    /*
                     let name = parse_name(body, &mut cursor);
                     println!("Got name: {name}");
+                    let question_type = parse_u16(body, &mut cursor);
+                    let question_class = parse_u16(body, &mut cursor);
+                    println!("Question type {question_type} class {question_class}");
+                    */
+                    let name = body_parser.parse_name();
+                    println!("\tQuestion #{i}");
+                    println!("\t\t{name}");
+                    let question_type = body_parser.parse_query_type();
+                    let question_class = body_parser.parse_query_class();
+                    println!("\t\t{question_type:?}");
+                    println!("\t\t{question_class:?}");
+
+                    if name == "axleos.com" {
+                        println!("Handling query for axleos.com");
+
+                        let mut writer = DnsQueryWriter::new_question(header.identifier as u16);
+                        writer.write();
+
+                        let mut writer = DnsQueryWriter::new_answer(header.identifier as u16, 300);
+                        writer.write();
+                        println!("Sending response packet data: {:02X?}", writer.output_packet);
+                        socket.send_to(&writer.output_packet, &src).unwrap();
+                    }
                 }
                 /*
-                static void _parse_dns_question(dns_packet_t* packet, dns_question_t* question, uint8_t** data_ptr_in) {
-                    memset(question, 0, sizeof(dns_question_t));
-
-                    uint8_t* data_ptr = *data_ptr_in;
-
-                    dns_name_parse_state_t pointer_parse = {0};
-                    _parse_dns_name(packet, &question->parsed_name, &data_ptr);
-
-                    question->type = _read_u16(&data_ptr);
-                    question->class = _read_u16(&data_ptr);
-
-                    printf("DNS question: %s, type %04x class %04x\n", question->parsed_name.name, question->type, question->class);
-
-                    // Write the new position of the pointer
-                    *data_ptr_in = data_ptr;
+                if header.answer_count > 0 || header.authority_count > 0 || header.additional_record_count > 0 {
+                    todo!()
                 }
-
                 */
             }
-            DnsOpcode::Status => {
-                todo!()
+            _ => {
+                //todo!()
             }
         }
-        todo!();
-
-        /*
-        if (packet->opcode == DNS_OP_QUERY || packet->opcode == DNS_OP_STATUS) {
-            uint8_t* data_head = dns_data;
-            for (int i = 0; i < ntohs(packet->question_count); i++) {
-                dns_question_t parsed_question = {0};
-                _parse_dns_question(packet, &parsed_question, &data_head);
-            }
-            for (int i = 0; i < ntohs(packet->answer_count); i++) {
-                dns_answer_t parsed_answer = {0};
-                _parse_dns_answer(packet, &parsed_answer, &data_head);
-            }
-        }
-        */
+        //todo!();
     }
 
     Ok(())
