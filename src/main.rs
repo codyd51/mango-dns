@@ -116,8 +116,16 @@ impl DnsPacketHeaderRaw {
         (self.0[u16s(u16_idx)..u16s(u16_idx + 1)].load::<u16>()).to_be() as _
     }
 
+    fn set_u16_at_u16_idx(&mut self, u16_idx: usize, val: u16) {
+        (self.0[u16s(u16_idx)..u16s(u16_idx + 1)].store(val.to_be()))
+    }
+
     fn identifier(&self) -> usize {
         self.get_u16_at_u16_idx(0)
+    }
+
+    fn set_identifier(&mut self, val: u16) {
+        self.set_u16_at_u16_idx(0, val)
     }
 
     fn question_count(&self) -> usize {
@@ -128,6 +136,10 @@ impl DnsPacketHeaderRaw {
         self.get_u16_at_u16_idx(3)
     }
 
+    fn set_answer_count(&mut self, val: u16) {
+        self.set_u16_at_u16_idx(3, val)
+    }
+
     fn authority_count(&self) -> usize {
         self.get_u16_at_u16_idx(4)
     }
@@ -136,20 +148,45 @@ impl DnsPacketHeaderRaw {
         self.get_u16_at_u16_idx(5)
     }
 
-    fn packed_flags(&self) -> &BitSlice<u16, Msb0> {
-        &self.0[u16s(1)..u16s(2)]
+    fn packed_flags(&self) -> BitArray<u16, Msb0> {
+        let mut flags = (self.get_u16_at_u16_idx(1) as u16);
+        flags = flags.to_le();
+        BitArray::from(flags)
+    }
+
+    fn packed_flags_mut(&mut self) -> &mut BitSlice<u16, Msb0> {
+        &mut self.0[u16s(1)..u16s(2)]
     }
 
     fn get_packed_flag_at_flags_bit_idx(&self, packed_flags_bit_idx: usize) -> bool {
         self.packed_flags()[packed_flags_bit_idx..packed_flags_bit_idx + 1].load::<u8>() == 1
+        //self.packed_flags().get(packed_flags_bit_idx).unwrap()
+    }
+
+    fn set_packed_flag_at_flags_bit_idx(&mut self, packed_flags_bit_idx: usize, flag: bool) {
+        let mut flags = (self.get_u16_at_u16_idx(1) as u16);
+        flags = flags.to_le();
+        let v: &mut BitSlice<u16, Msb0> = BitSlice::from_element_mut(&mut flags);
+        v.set(packed_flags_bit_idx, flag);
+        self.set_u16_at_u16_idx(1, flags);
+
+        //self.packed_flags_mut().set(packed_flags_bit_idx, flag)
     }
 
     fn is_response(&self) -> bool {
         self.get_packed_flag_at_flags_bit_idx(0)
     }
 
+    fn set_is_response(&mut self, val: bool) {
+        self.set_packed_flag_at_flags_bit_idx(0, val)
+    }
+
     fn opcode(&self) -> usize {
         self.packed_flags()[1..5].load()
+    }
+
+    fn set_opcode(&mut self, val: u8) {
+        self.packed_flags_mut()[1..5].store(val)
     }
 
     fn is_authoritative_answer(&self) -> bool {
