@@ -611,3 +611,73 @@ fn main() -> std::io::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod test{
+    use crate::{DnsOpcode, DnsPacketHeader, DnsPacketHeaderRaw, DnsQueryWriter, PacketDirection};
+
+    #[test]
+    fn parse_header() {
+        let header_data: [u8; 12] = [0xdc, 0xb7, 0x1, 0x20, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1];
+        let header_raw = unsafe {
+            &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
+        };
+        assert_eq!(header_raw.opcode(), 0);
+        let header = DnsPacketHeader::from(header_raw);
+        assert_eq!(header.identifier, 0xdcb7);
+        assert_eq!(header.direction, PacketDirection::Query);
+        assert_eq!(header.opcode, DnsOpcode::Query);
+        assert_eq!(header.is_truncated, false);
+        assert_eq!(header.is_recursion_desired, true);
+        assert_eq!(header.question_count, 1);
+        assert_eq!(header.answer_count, 0);
+        assert_eq!(header.authority_count, 0);
+        assert_eq!(header.additional_record_count, 1);
+    }
+
+    #[test]
+    fn write_response() {
+        let transaction_id = 0x669f;
+        let ttl = 300_u32;
+        let mut writer = DnsQueryWriter::new_answer(transaction_id, ttl as _);
+        writer.write();
+        let transaction_id_bytes = transaction_id.to_be_bytes();
+        let ttl_bytes = ttl.to_be_bytes();
+        assert_eq!(
+            writer.output_packet,
+            vec![
+                // Header
+                //   Transaction ID
+                transaction_id_bytes[0], transaction_id_bytes[1],
+                //   Packed flags
+                0x80, 0x00,
+                //   Other header fields
+                //   Question count
+                0x00, 0x00,
+                //   Answer count
+                0x00, 0x01,
+                //   Authority RR count
+                0x00, 0x00,
+                //   Additional RR count
+                0x00, 0x00,
+                // Data
+                //   'axleos'
+                0x06, 0x61, 0x78, 0x6c, 0x65, 0x6f, 0x73,
+                //   'com'
+                0x03, 0x63, 0x6f, 0x6d,
+                //   Null byte to end labels
+                0x00,
+                //   Type: A
+                0x00, 0x01,
+                //   Class: IN
+                0x00, 0x01,
+                //   TTL: 300s
+                ttl_bytes[0], ttl_bytes[1], ttl_bytes[2], ttl_bytes[3],
+                //   Data length: 4
+                0x00, 0x04,
+                //   IP address
+                172, 67, 189, 115,
+            ]
+        )
+    }
+}
