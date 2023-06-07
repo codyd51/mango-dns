@@ -490,6 +490,15 @@ impl DnsQueryWriter {
 }
 
 fn main() -> std::io::Result<()> {
+    println!("trying to connect...");
+    let root_dns_server_socket = TcpStream::connect("199.9.14.201:53").unwrap();
+    println!("Connection to root DNS server: {root_dns_server_socket:?}");
+    //let root_dns_server_socket = UdpSocket::bind("199.9.14.201:53").unwrap();
+    let root_dns_server_socket = UdpSocket::bind("0.0.0.0:53").unwrap();
+    //let remote_addr: SocketAddr = "199.9.14.201:53".parse().unwrap();
+    let remote_addr: SocketAddr = "1.1.1.1:53".parse().unwrap();
+    root_dns_server_socket.connect(remote_addr).unwrap();
+    println!("Connection to root DNS server: {root_dns_server_socket:?}");
 
     let mut writer = DnsQueryWriter::new_answer(0x669f, 300);
     writer.write();
