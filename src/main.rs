@@ -1,7 +1,8 @@
 use std::fmt::{Display, Formatter};
 use std::mem;
-use std::net::UdpSocket;
+use std::net::{SocketAddr, TcpStream, UdpSocket};
 use bitvec::prelude::*;
+use num_traits::PrimInt;
 
 /*
 # Set DNS server
