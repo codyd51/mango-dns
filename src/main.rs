@@ -411,47 +411,82 @@ impl<'a> DnsQueryParser<'a> {
         DnsQueryClass::try_from(self.parse_u16()).unwrap_or_else(|v| panic!("{v} is not a known query class"))
     }
 }
-        }
-        else {
-            // Read a label literal
-            //println!("reading label literal, len={label_len}");
-            let label_bytes = parse_label(data, cursor, label_len);
-            let label: String = label_bytes.iter().map(|&b| b as char).collect();
-            //println!("got label: {label}");
-            name_components.push(label);
+
+struct DnsQueryWriter {
+    output_packet: Vec<u8>,
+    cursor: usize,
+    ttl: usize,
+}
+
+impl DnsQueryWriter {
+    fn new_answer(transaction_id: u16, ttl: usize) -> Self {
+        let mut out = Self {
+            output_packet: Vec::new(),
+            cursor: 0,
+            ttl,
+        };
+        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
+        header.set_identifier(transaction_id);
+        header.set_is_response(true);
+        header.set_opcode(0);
+        header.set_answer_count(1);
+        let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
+        let header_bytes_len = header_bytes.len();
+        out.output_packet.append(&mut header_bytes);
+        out.cursor += header_bytes_len;
+        out
+    }
+
+    fn write_u8(&mut self, val: u8) {
+        self.output_packet.push(val);
+        self.cursor += 1;
+    }
+
+    fn write_u16(&mut self, val: u16) {
+        for &b in val.to_be_bytes().iter() {
+            self.write_u8(b);
         }
     }
 
-    name_components.join(".")
-    /*
-    while (true) {
-        uint8_t label_len = _dns_name_read_label_len(&data_ptr);
-
-        // If the high two bits of the label are set,
-        // this is a pointer to a prior string
-        if ((label_len >> 6) == 0x3) {
-            out_state->label_count++;
-
-            // Mask off the high two bits
-            uint8_t b1 = label_len & ~(3 << 6);
-            uint8_t b2 = *(data_ptr++);
-            uint16_t string_offset = (b1 << 8) | b2;
-
-            dns_name_parse_state_t pointer_parse = {0};
-            uint8_t* label_offset = (uint8_t*)packet + string_offset;
-            _parse_dns_name(packet, &pointer_parse, &label_offset);
-            out_state->name_len += snprintf(
-                out_state->name + out_state->name_len,
-                sizeof(out_state->name),
-                "%s",
-                pointer_parse.name
-            );
-
-            // Pointers are always the end of a name
-            break;
+    fn write_u32(&mut self, val: u32) {
+        for &b in val.to_be_bytes().iter() {
+            self.write_u8(b);
         }
     }
-    */
+
+    fn read<'a, T: BitStore, O: BitOrder>(s: &mut &'a BitSlice<T, O>, n: usize) -> &'a BitSlice<T, O> {
+        let result = &s[..n];
+        *s = &s[n..];
+        result
+    }
+
+    fn write(&mut self) {
+        let domain = "axleos.com";
+        for label in domain.split(".") {
+            // Write label length, then the label data
+            self.write_u8(label.len() as _);
+            for ch in label.chars() {
+                self.write_u8(ch as _);
+            }
+        }
+        // Null byte to terminate labels
+        self.write_u8('\0' as _);
+
+        // Type: A
+        self.write_u16(1);
+
+        // Class: IN
+        self.write_u16(1);
+
+        // TTL
+        self.write_u32(self.ttl as _);
+
+        // IP address length
+        self.write_u16(4);
+
+        // IP address of the record
+        self.write_u32(0xac_43_bd_73);
+    }
 }
 
 fn main() -> std::io::Result<()> {
