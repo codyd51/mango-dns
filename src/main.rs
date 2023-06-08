@@ -1117,6 +1117,14 @@ impl DnsResolver {
                         _ => todo!(),
                     }
                 }
+                DnsRecordData::StartOfAuthority(_) => {
+                    // For now, treat any SOA record as meaning that the requested record doesn't exist
+                    // Don't do anything with SOA records for now
+                    // TODO(PT): Does this always mean that the requested record didn't exist?
+                    // TODO(PT): Return a response containing the SOA, which will serve as an NXDOMAIN to the client
+                    println!("\t\tFound an SOA record, assuming this means the requested record doesn't exist...");
+                    return None;
+                }
                 _ => todo!(),
             };
         }
