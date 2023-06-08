@@ -813,6 +813,7 @@ fn read_packet_to_buffer<'a>(socket: &UdpSocket, buffer: &'a mut [u8]) -> (Socke
 #[derive(Debug)]
 struct DnsResponse {
     question_records: Vec<DnsQuestionRecord>,
+    answer_records: Vec<DnsRecord>,
     authority_records: Vec<DnsRecord>,
     additional_records: Vec<DnsRecord>,
 }
@@ -820,18 +821,44 @@ struct DnsResponse {
 impl DnsResponse {
     fn new(
         question_records: Vec<DnsQuestionRecord>,
+        answer_records: Vec<DnsRecord>,
         authority_records: Vec<DnsRecord>,
         additional_records: Vec<DnsRecord>,
     ) -> Self {
         Self {
             question_records,
+            answer_records,
             authority_records,
             additional_records,
         }
     }
 }
 
-struct DnsResolver {}
+impl Display for DnsResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (i, question) in self.question_records.iter().enumerate() {
+            writeln!(f, "\tQuestion #{i}: {question:?}")?;
+        }
+
+        for (i, answer) in self.answer_records.iter().enumerate() {
+            writeln!(f, "\tAnswer #{i}: {answer:?}")?;
+        }
+
+        for (i, authority_record) in self.authority_records.iter().enumerate() {
+            writeln!(f, "\tAuthority record #{i}: {authority_record:?}")?;
+        }
+
+        for (i, additional_record) in self.additional_records.iter().enumerate() {
+            writeln!(f, "\tAdditional record #{i}: {additional_record:?}")?;
+        }
+
+        Ok(())
+    }
+}
+
+struct DnsResolver {
+    cache: RefCell<HashMap<FullyQualifiedDomainName, Vec<DnsRecord>>>,
+}
 
 impl DnsResolver {
     const ROOT_DNS_SERVERS: [&'static str; 13] = [
@@ -851,32 +878,31 @@ impl DnsResolver {
     ];
 
     fn new() -> Self {
-        Self {}
+        Self {
+            cache: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn dns_socket_for_ipv4(ip: Ipv4Addr) -> SocketAddr {
+        format!("{ip}:53").parse().unwrap()
+    }
+
+    fn dns_socket_for_ipv6(ip: Ipv6Addr) -> SocketAddr {
+        //format!("[{ip}]:53").parse().unwrap()
+        format!("[{ip}]:53").parse().unwrap()
     }
 
     fn select_root_dns_server_socket_addr() -> SocketAddr {
-        let server = Self::ROOT_DNS_SERVERS.choose(&mut rand::thread_rng()).unwrap();
-        format!("{server}:53").parse().unwrap()
+        let server_ip = Self::ROOT_DNS_SERVERS.choose(&mut rand::thread_rng()).unwrap();
+        Self::dns_socket_for_ipv4(server_ip.parse().unwrap())
     }
 
-    fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsQuestionRecord) -> DnsResponse {
-        let socket = UdpSocket::bind("0.0.0.0:53").unwrap();
-        // PT: For a reason I don't understand, if I try to bind directly to a root DNS server, it fails with:
-        // "Can't assign requested address"
-        // However, if I first bind to 0.0.0.0, then connect, it succeeds.
-        socket.connect(dest).unwrap();
-
-        // Send the question
-        let mut rng = rand::thread_rng();
-        let transaction_id = rng.gen_range(0..u16::MAX) as u16;
-        let packet = DnsPacketWriter::new_packet_from_question(transaction_id, question);
-        socket.send(&packet).expect("Failed to send question to {dest}");
-
+    fn await_and_parse_response(socket: &UdpSocket, transaction_id: u16) -> (DnsPacketHeader, DnsResponse) {
         // Await the response
         let mut response_buffer = [0; 1500];
         let (_src, header, mut body) = read_packet_to_buffer(&socket, &mut response_buffer);
 
-        println!("Got response from {dest}:");
+        println!("Got response from {socket:?}:");
         println!("{header}");
 
         // Ensure it was the response we were expecting
@@ -884,62 +910,90 @@ impl DnsResolver {
         let received_transaction_id = header.identifier as u16;
         assert_eq!(received_transaction_id, transaction_id, "TODO: Received a response for a different transaction. Expected: {transaction_id}, received {received_transaction_id}");
 
-        // First, parse the questions
-        let mut question_records = vec![];
-        for i in 0..header.question_count {
-            let question = body.parse_question();
-            println!("\tQuestion #{i}: {question:?}");
-            question_records.push(question);
-        }
+        let response = body.parse_response(&header);
+        (header, response)
+    }
 
-        if header.answer_count > 0 { todo!(); }
+    fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsQuestionRecord) -> DnsResponse {
+        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        // PT: For a reason I don't understand, if I try to bind directly to a root DNS server, it fails with:
+        // "Can't assign requested address"
+        // However, if I first bind to 0.0.0.0, then connect, it succeeds.
+        println!("Connecting to: {dest:?}");
+        socket.connect(dest).unwrap();
 
-        // Parse the authoritative records
-        let mut authority_records = vec![];
-        for i in 0..header.authority_count {
-            let authority_record = body.parse_record();
-            println!("\tAuthority record #{i}: {authority_record:?}");
-            authority_records.push(authority_record);
-        }
-
-        // Parse additional records
-        let mut additional_records = vec![];
-        for i in 0..header.additional_record_count {
-            let additional_record = body.parse_record();
-            println!("\tAdditional record #{i}: {additional_record:?}");
-            additional_records.push(additional_record);
-        }
-
-        DnsResponse::new(question_records, authority_records, additional_records)
+        // Send the question
+        let mut rng = rand::thread_rng();
+        let transaction_id = rng.gen_range(0..u16::MAX) as u16;
+        let packet = DnsPacketWriter::new_packet_from_question(transaction_id, question);
+        socket.send(&packet).expect("Failed to send question to {dest}");
+        Self::await_and_parse_response(&socket, transaction_id).1
     }
 
     fn resolve_question(&self, question: &DnsQuestionRecord) -> DnsRecordData {
+        // First, check whether the answer is in the cache
+        {
+            let mut cache = self.cache.borrow_mut();
+            let requested_fqdn = FullyQualifiedDomainName(question.name.clone());
+            if let Some(cached_records) = cache.get(&requested_fqdn) {
+                // Pick the first cached record with a type we like
+                println!("Resolving {requested_fqdn} from cache");
+                return cached_records.iter().find(|r| r.record_type == DnsRecordType::A).expect("Failed to find a cached A record").record_data.clone();
+            }
+        }
+
         // Start off with querying a root DNS server
         let mut server_addr = Self::select_root_dns_server_socket_addr();
 
         loop {
             let response = self.send_question_and_await_response(&server_addr, question);
+            println!("Response:\n{response}");
+
+            // First, add the additional records to our cache, as we might need them to resolve the next destination
+            for additional_record in response.additional_records.iter() {
+                let mut cache = self.cache.borrow_mut();
+                let fqdn = FullyQualifiedDomainName(additional_record.name.clone());
+                cache.entry(fqdn).or_insert(vec![]).push(additional_record.clone());
+            }
+
+            // Did we receive an answer?
+            if !response.answer_records.is_empty() {
+                println!("Found answers!");
+                // Add the answers to the cache
+                for answer_record in response.answer_records.iter() {
+                    let mut cache = self.cache.borrow_mut();
+                    let fqdn = FullyQualifiedDomainName(answer_record.name.clone());
+                    cache.entry(fqdn).or_insert(vec![]).push(answer_record.clone());
+                }
+
+                // And return the first answer
+                return response.answer_records[0].record_data.clone();
+            }
 
             // The server we just queried will tell us who the authority is for the next component of the domain name
             // Pick the first authority that the server mentioned
             let authority_record = &response.authority_records[0];
+
             println!("Found authority for {}: {:?}", authority_record.name, authority_record);
 
             match &authority_record.record_data {
                 DnsRecordData::NameServer(authority_name) => {
-                    println!("Will recurse to authority {authority_name}");
-                    let question_to_resolve_authority = DnsQuestionRecord::new(authority_name, DnsRecordType::A, DnsRecordClass::Internet);
-                    println!("Sending question {question_to_resolve_authority:?}");
-                    let a = self.resolve_question(&question_to_resolve_authority);
-                    println!("*** Got response! {a:?}");
+                    // (This should hit the cache, since the nameserver's A record should have been provided by the root server's additional records)
+                    // TODO(PT): Explicit 'get_from_cache'
+                    let record_data = self.resolve_question(&DnsQuestionRecord::new(&authority_name.0, DnsRecordType::A, DnsRecordClass::Internet));
+                    match record_data {
+                        DnsRecordData::A(ipv4_addr) => {
+                            server_addr = Self::dns_socket_for_ipv4(ipv4_addr);
+                        }
+                        DnsRecordData::AAAA(ipv6_addr) => {
+                            server_addr = Self::dns_socket_for_ipv6(ipv6_addr);
+                        }
+                        _ => todo!(),
+                    }
                 }
                 _ => todo!(),
             };
         }
-        //println!("Got response {response:?}");
-
-
-        // The server we just queried will tell us which component of the dom
     }
 }
 
