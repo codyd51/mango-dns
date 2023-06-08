@@ -475,7 +475,6 @@ impl<'a> DnsQueryParser<'a> {
         out
     }
 
-    fn parse_name(&mut self) -> String {
     fn parse_label(&mut self, len: usize) -> Vec<u8> {
         let mut cursor = self.cursor;
         let out = self.parse_label_at(len, &mut cursor);
@@ -483,6 +482,7 @@ impl<'a> DnsQueryParser<'a> {
         out
     }
 
+    fn parse_name_at(&mut self, cursor: &mut usize) -> String {
         //println!("parsing name at {}...", self.cursor);
         // The DNS body compression scheme allows a name to be represented as:
         // - A pointer
@@ -491,25 +491,34 @@ impl<'a> DnsQueryParser<'a> {
         let mut name_components = vec![];
         // TODO(PT): How to impose an upper limit here?
         loop {
-            let label_len = self.parse_label_len();
+            let label_len = self.parse_label_len_at(cursor);
 
             // If the high two bits of the label are set,
             // this is a pointer to a prior string
             if (label_len >> 6) == 0b11 {
-                println!("found a pointer to a prior string");
-                todo!();
+                // Mask off the two high bits
+                let byte1 = (label_len as u8) & !(3_u8 << 6);
+                let byte2 = self.parse_u8_at(cursor) as u8;
+                let label_offset_into_packet = ((byte1 as u16) << 8) | byte2 as u16;
+                assert!(label_offset_into_packet as usize >= DnsPacketHeaderRaw::HEADER_SIZE, "Cannot follow pointer into packet header");
+
+                let label_offset_into_body = label_offset_into_packet as usize - DnsPacketHeaderRaw::HEADER_SIZE;
+                let mut pointer_cursor = label_offset_into_body;
+                // Recurse and read a name from the pointer
+                let name_from_pointer = self.parse_name_at(&mut pointer_cursor);
+                //println!("Got name from pointer: {name_from_pointer}");
+                name_components.push(name_from_pointer);
+                // Pointers are always the end of a name
+                break;
             }
 
             // If we're in a label list and just encountered a null byte, we're done
             if label_len == 0 {
                 break;
-            }
-            else {
+            } else {
                 // Read a label literal
-                //println!("reading label literal, len={label_len}");
-                let label_bytes = self.parse_label(label_len);
+                let label_bytes = self.parse_label_at(label_len, cursor);
                 let label: String = label_bytes.iter().map(|&b| b as char).collect();
-                //println!("got label: {label}");
                 name_components.push(label);
             }
         }
