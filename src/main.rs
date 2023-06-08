@@ -303,29 +303,29 @@ impl From<&DnsPacketHeaderRaw> for DnsPacketHeader {
 
 impl Display for DnsPacketHeader {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[DnsPacketHeader 0x{:0x} ", self.identifier)?;
+        writeln!(f, "[DnsPacketHeader ID=0x{:0x}]", self.identifier)?;
         match &self.direction {
-            PacketDirection::Query => write!(f, "query ")?,
+            PacketDirection::Query => writeln!(f, "\t[Query]")?,
             PacketDirection::Response(response_fields) => {
-                if !response_fields.is_authority {
-                    write!(f, "non-")?;
-                }
-                write!(f, "authoritative ")?;
+                writeln!(f, "{}", match response_fields.is_authority {
+                    true => "\t[Authoritative]",
+                    false => "\t[Non-authoritative]",
+                })?;
 
-                if !response_fields.is_recursion_available {
-                    write!(f, "non-")?;
-                }
-                write!(f, "non-recursive ")?;
+                writeln!(f, "{}", match response_fields.is_recursion_available {
+                    true => "\t[Recursive]",
+                    false => "\t[Non-recursive]",
+                })?;
 
-                write!(f, "response (code {}) ", response_fields.response_code)?;
+                writeln!(f, "\t[Response code #{}]", response_fields.response_code)?;
             }
         };
 
         if self.is_truncated {
-            write!(f, "truncated ")?;
+            writeln!(f, "\t[Truncated]")?;
         }
         if self.is_recursion_desired {
-            write!(f, "recursion-requested ")?;
+            writeln!(f, "\t[Recursion requested]")?;
         }
 
         if self.question_count >= 1 {
@@ -333,28 +333,28 @@ impl Display for DnsPacketHeader {
                 1 => "question",
                 _ => "questions",
             };
-            write!(f, "{} {noun} ", self.question_count)?;
+            writeln!(f, "\t[{} {noun}] ", self.question_count)?;
         }
         if self.answer_count >= 1 {
             let noun = match self.answer_count {
                 1 => "answer",
                 _ => "answers",
             };
-            write!(f, "{} {noun} ", self.answer_count)?;
+            writeln!(f, "\t[{} {noun}]", self.answer_count)?;
         }
         if self.authority_count >= 1 {
             let noun = match self.authority_count {
                 1 => "authorityRR",
                 _ => "authorityRRs",
             };
-            write!(f, "{} {noun} ", self.authority_count)?;
+            writeln!(f, "\t[{} {noun}]", self.authority_count)?;
         }
         if self.additional_record_count >= 1 {
             let noun = match self.additional_record_count {
                 1 => "additionalRR",
                 _ => "additionalRRs",
             };
-            write!(f, "{} {noun} ", self.additional_record_count)?;
+            writeln!(f, "\t[{} {noun}]", self.additional_record_count)?;
         }
         Ok(())
     }
