@@ -1,4 +1,6 @@
-use std::fmt::{Display, Formatter};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt::{Debug, Display, Formatter};
 use std::mem;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket};
 use bitvec::prelude::*;
@@ -65,7 +67,7 @@ impl TryFrom<usize> for DnsOpcode {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 enum DnsRecordType {
     A = 1,
     AAAA = 28,
@@ -109,7 +111,7 @@ impl TryFrom<usize> for DnsRecordClass {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct DnsRecordTtl(usize);
 
 #[derive(Debug)]
@@ -368,14 +370,23 @@ impl DnsQuestionRecord {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct FullyQualifiedDomainName(String);
+
+impl Display for FullyQualifiedDomainName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FQDN({})", self.0)
+    }
+}
+
+#[derive(Debug, Clone)]
 enum DnsRecordData {
     A(Ipv4Addr),
     AAAA(Ipv6Addr),
-    NameServer(String),
+    NameServer(FullyQualifiedDomainName),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DnsRecord {
     name: String,
     record_type: DnsRecordType,
@@ -562,7 +573,7 @@ impl<'a> DnsQueryParser<'a> {
                 DnsRecordData::AAAA(Ipv6Addr::from(self.parse_ipv6()))
             }
             DnsRecordType::NameServer => {
-                DnsRecordData::NameServer(self.parse_name())
+                DnsRecordData::NameServer(FullyQualifiedDomainName(self.parse_name()))
             }
             _ => todo!("{record_type:?}"),
         };
