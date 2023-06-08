@@ -776,13 +776,18 @@ impl DnsPacketWriter {
             if let Some(record_data) = &record.record_data {
                 match &record_data {
                     DnsRecordData::A(ipv4_addr) => {
-                        // Data size
                         writer.write_ipv4_addr(*ipv4_addr);
                     },
                     DnsRecordData::CanonicalName(fqdn) => {
-                        todo!();
+                        let mut name_buffer = vec![];
+                        let name_len = Self::write_name_to(&fqdn.0, &mut name_buffer);
+                        writer.write_u16(name_len as _);
+                        writer.write_buf(&name_buffer);
                     }
-                    _ => todo!(),
+                    DnsRecordData::AAAA(ipv6_addr) => {
+                        writer.write_ipv6_addr(*ipv6_addr);
+                    }
+                    record_type => todo!("Cannot write record type {record_type:?}"),
                 }
             }
         }
