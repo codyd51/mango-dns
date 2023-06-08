@@ -629,7 +629,7 @@ impl DnsPacketWriter {
         out.write_u32(ttl as _);
 
         // IP
-        out.write_ipv4_addr(0xac_43_bd_73);
+        out.write_ipv4_addr_from_u32(0xac_43_bd_73);
 
         out.output_packet
     }
@@ -655,6 +655,44 @@ impl DnsPacketWriter {
 
         // Class: IN
         out.write_u16(1);
+
+        out.output_packet
+    }
+
+    fn new_packet_from_record(transaction_id: u16, record: &DnsRecord) -> Vec<u8> {
+        let mut out = Self {
+            output_packet: Vec::new(),
+            cursor: 0,
+        };
+        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
+        header.set_identifier(transaction_id);
+        header.set_is_response(true);
+        header.set_opcode(0);
+        header.set_answer_count(1);
+        let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
+        let header_bytes_len = header_bytes.len();
+        out.output_packet.append(&mut header_bytes);
+        out.cursor += header_bytes_len;
+
+        // Record name
+        out.write_name(&record.name);
+        // Record type
+        out.write_u16(record.record_type as u16);
+        // Record class
+        out.write_u16(record.record_class as u16);
+        // TTL
+        out.write_u32(record.record_ttl.0 as _);
+
+        match &record.record_data {
+            DnsRecordData::A(ipv4_addr) => {
+                // Data size
+                out.write_ipv4_addr(*ipv4_addr);
+            },
+            DnsRecordData::CanonicalName(fqdn) => {
+                todo!();
+            }
+            _ => todo!(),
+        }
 
         out.output_packet
     }
@@ -714,12 +752,16 @@ impl DnsPacketWriter {
 
     }
 
-    fn write_ipv4_addr(&mut self, addr: u32) {
+    fn write_ipv4_addr_from_u32(&mut self, addr: u32) {
         // IP address length
         self.write_u16(4);
 
         // IP address of the record
         self.write_u32(addr);
+    }
+
+    fn write_ipv4_addr(&mut self, addr: Ipv4Addr) {
+        self.write_ipv4_addr_from_u32(addr.into())
     }
 }
 
