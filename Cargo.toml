@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 bitvec = "1"
 num-traits = "0.2.15"
+rand = "0.8.5"

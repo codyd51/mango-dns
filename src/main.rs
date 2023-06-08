@@ -3,6 +3,8 @@ use std::mem;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket};
 use bitvec::prelude::*;
 use num_traits::PrimInt;
+use rand::{random, Rng};
+use rand::seq::SliceRandom;
 
 /*
 # Set DNS server
@@ -42,21 +44,6 @@ The one in axle seems like it's nearly a DNS resolver:
 
 */
 
-const ROOT_DNS_SERVERS: [&str; 13] = [
-    "198.41.0.4",
-    "199.9.14.201",
-    "192.33.4.12",
-    "199.7.91.13",
-    "192.203.230.10",
-    "192.5.5.241",
-    "192.112.36.4",
-    "198.97.190.53",
-    "192.36.148.17",
-    "192.58.128.30",
-    "193.0.14.129",
-    "199.7.83.42",
-    "202.12.27.33",
-];
 
 #[derive(Debug, PartialEq, Eq)]
 enum DnsOpcode {
@@ -78,7 +65,7 @@ impl TryFrom<usize> for DnsOpcode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum DnsRecordType {
     A = 1,
     AAAA = 28,
@@ -106,7 +93,7 @@ impl TryFrom<usize> for DnsRecordType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum DnsRecordClass {
     Internet = 1,
 }
@@ -589,12 +576,12 @@ impl<'a> DnsQueryParser<'a> {
     }
 }
 
-struct DnsQueryWriter {
+struct DnsPacketWriter {
     output_packet: Vec<u8>,
     cursor: usize,
 }
 
-impl DnsQueryWriter {
+impl DnsPacketWriter {
     fn new_answer(
         transaction_id: u16,
         name: &str,
@@ -655,6 +642,31 @@ impl DnsQueryWriter {
         out.output_packet
     }
 
+    fn new_packet_from_question(transaction_id: u16, question: &DnsQuestionRecord) -> Vec<u8> {
+        let mut out = Self {
+            output_packet: Vec::new(),
+            cursor: 0,
+        };
+        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
+        header.set_identifier(transaction_id);
+        header.set_is_response(false);
+        header.set_opcode(0);
+        header.set_question_count(1);
+        let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
+        let header_bytes_len = header_bytes.len();
+        out.output_packet.append(&mut header_bytes);
+        out.cursor += header_bytes_len;
+
+        // Record name
+        out.write_name(&question.name);
+        // Record type
+        out.write_u16(question.query_type as u16);
+        // Record class
+        out.write_u16(question.query_class as u16);
+
+        out.output_packet
+    }
+
     fn write_u8(&mut self, val: u8) {
         self.output_packet.push(val);
         self.cursor += 1;
@@ -707,50 +719,156 @@ fn read_packet_to_buffer<'a>(socket: &UdpSocket, buffer: &'a mut [u8]) -> (Socke
     (src, header, body_parser)
 }
 
-fn send_query(socket: &UdpSocket, query: &[u8]) {
-    socket.send(&query).unwrap();
-    // Await a response
-    let mut response_buffer = [0; 1500];
-    loop {
-        let (src, header, mut body) = read_packet_to_buffer(socket, &mut response_buffer);
+/// 'High-level' representation of a response from another server
+#[derive(Debug)]
+struct DnsResponse {
+    question_records: Vec<DnsQuestionRecord>,
+    authority_records: Vec<DnsRecord>,
+    additional_records: Vec<DnsRecord>,
+}
 
-        println!("Got response from Root DNS:");
+impl DnsResponse {
+    fn new(
+        question_records: Vec<DnsQuestionRecord>,
+        authority_records: Vec<DnsRecord>,
+        additional_records: Vec<DnsRecord>,
+    ) -> Self {
+        Self {
+            question_records,
+            authority_records,
+            additional_records,
+        }
+    }
+}
+
+struct DnsResolver {}
+
+impl DnsResolver {
+    const ROOT_DNS_SERVERS: [&'static str; 13] = [
+        "198.41.0.4",
+        "199.9.14.201",
+        "192.33.4.12",
+        "199.7.91.13",
+        "192.203.230.10",
+        "192.5.5.241",
+        "192.112.36.4",
+        "198.97.190.53",
+        "192.36.148.17",
+        "192.58.128.30",
+        "193.0.14.129",
+        "199.7.83.42",
+        "202.12.27.33",
+    ];
+
+    fn new() -> Self {
+        Self {}
+    }
+
+    fn select_root_dns_server_socket_addr() -> SocketAddr {
+        let server = Self::ROOT_DNS_SERVERS.choose(&mut rand::thread_rng()).unwrap();
+        format!("{server}:53").parse().unwrap()
+    }
+
+    fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsQuestionRecord) -> DnsResponse {
+        let socket = UdpSocket::bind("0.0.0.0:53").unwrap();
+        // PT: For a reason I don't understand, if I try to bind directly to a root DNS server, it fails with:
+        // "Can't assign requested address"
+        // However, if I first bind to 0.0.0.0, then connect, it succeeds.
+        socket.connect(dest).unwrap();
+
+        // Send the question
+        let mut rng = rand::thread_rng();
+        let transaction_id = rng.gen_range(0..u16::MAX) as u16;
+        let packet = DnsPacketWriter::new_packet_from_question(transaction_id, question);
+        socket.send(&packet).expect("Failed to send question to {dest}");
+
+        // Await the response
+        let mut response_buffer = [0; 1500];
+        let (_src, header, mut body) = read_packet_to_buffer(&socket, &mut response_buffer);
+
+        println!("Got response from {dest}:");
         println!("{header}");
 
+        // Ensure it was the response we were expecting
+        // TODO(PT): We'll need some kind of event-driven model to handle interleaved responses
+        let received_transaction_id = header.identifier as u16;
+        assert_eq!(received_transaction_id, transaction_id, "TODO: Received a response for a different transaction. Expected: {transaction_id}, received {received_transaction_id}");
+
         // First, parse the questions
+        let mut question_records = vec![];
         for i in 0..header.question_count {
             let question = body.parse_question();
             println!("\tQuestion #{i}: {question:?}");
+            question_records.push(question);
         }
 
         if header.answer_count > 0 { todo!(); }
 
         // Parse the authoritative records
+        let mut authority_records = vec![];
         for i in 0..header.authority_count {
             let authority_record = body.parse_record();
             println!("\tAuthority record #{i}: {authority_record:?}");
+            authority_records.push(authority_record);
         }
 
         // Parse additional records
+        let mut additional_records = vec![];
         for i in 0..header.additional_record_count {
             let additional_record = body.parse_record();
             println!("\tAdditional record #{i}: {additional_record:?}");
+            additional_records.push(additional_record);
         }
-        break;
+
+        DnsResponse::new(question_records, authority_records, additional_records)
+    }
+
+    fn resolve_question(&self, question: &DnsQuestionRecord) -> DnsRecordData {
+        // Start off with querying a root DNS server
+        let mut server_addr = Self::select_root_dns_server_socket_addr();
+
+        loop {
+            let response = self.send_question_and_await_response(&server_addr, question);
+
+            // The server we just queried will tell us who the authority is for the next component of the domain name
+            // Pick the first authority that the server mentioned
+            let authority_record = &response.authority_records[0];
+            println!("Found authority for {}: {:?}", authority_record.name, authority_record);
+
+            match &authority_record.record_data {
+                DnsRecordData::NameServer(authority_name) => {
+                    println!("Will recurse to authority {authority_name}");
+                    let question_to_resolve_authority = DnsQuestionRecord::new(authority_name, DnsRecordType::A, DnsRecordClass::Internet);
+                    println!("Sending question {question_to_resolve_authority:?}");
+                    let a = self.resolve_question(&question_to_resolve_authority);
+                    println!("*** Got response! {a:?}");
+                }
+                _ => todo!(),
+            };
+        }
+        //println!("Got response {response:?}");
+
+
+        // The server we just queried will tell us which component of the dom
     }
 }
 
 fn main() -> std::io::Result<()> {
+    let resolver = DnsResolver::new();
+    resolver.resolve_question(&DnsQuestionRecord::new(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
+    return Ok(());
     let root_dns_server_socket = UdpSocket::bind("0.0.0.0:53").unwrap();
     // TODO(PT): Pick a random root server
+    /*
     let remote_addr: SocketAddr = format!("{}:53", ROOT_DNS_SERVERS[0]).parse().unwrap();
     root_dns_server_socket.connect(remote_addr).unwrap();
     println!("Connection to root DNS server: {root_dns_server_socket:?}");
 
-    let question = DnsQueryWriter::new_question(0x0001, "www.axleos.com");
+    let question = DnsPacketWriter::new_question(0x0001, "www.axleos.com");
     send_query(&root_dns_server_socket, &question);
 
     return Ok(());
+     */
 
     // Ensure the packet header is defined correctly
     let dns_packet_header_size = mem::size_of::<DnsPacketHeaderRaw>();
@@ -784,7 +902,7 @@ fn main() -> std::io::Result<()> {
         let (packet_size, src) = socket.recv_from(&mut packet_buffer)?;
 
         /*
-        let mut writer = DnsQueryWriter::new_answer(0x669f, 300);
+        let mut writer = DnsPacketWriter::new_answer(0x669f, 300);
         writer.write();
         println!("{:02X?}", writer.output_packet);
         socket.send_to(&writer.output_packet, &src).unwrap();
@@ -835,10 +953,10 @@ fn main() -> std::io::Result<()> {
                     if name == "axleos.com" {
                         println!("Handling query for axleos.com");
 
-                        let mut writer = DnsQueryWriter::new_question(header.identifier as u16);
+                        let mut writer = DnsPacketWriter::new_question(header.identifier as u16);
                         writer.write();
 
-                        let mut writer = DnsQueryWriter::new_answer(header.identifier as u16, &name, 300);
+                        let mut writer = DnsPacketWriter::new_answer(header.identifier as u16, &name, 300);
                         writer.write();
                         println!("Sending response packet data: {:02X?}", writer.output_packet);
                         socket.send_to(&writer.output_packet, &src).unwrap();
@@ -846,7 +964,7 @@ fn main() -> std::io::Result<()> {
                     */
                     if name.ends_with(".com") {
                         println!("Forwarding request to Cloudflare DNS");
-                        let forwarded_request = DnsQueryWriter::new_question((header.identifier as u16) + 1, &name);
+                        let forwarded_request = DnsPacketWriter::new_question((header.identifier as u16) + 1, &name);
                         println!("Forwarded request: {forwarded_request:?}");
                         root_dns_server_socket.send(&forwarded_request).unwrap();
                         // Await a response
@@ -884,7 +1002,7 @@ fn main() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod test{
-    use crate::{DnsOpcode, DnsPacketHeader, DnsPacketHeaderRaw, DnsQueryWriter, PacketDirection};
+    use crate::{DnsOpcode, DnsPacketHeader, DnsPacketHeaderRaw, DnsPacketWriter, PacketDirection};
 
     #[test]
     fn parse_header() {
@@ -909,12 +1027,11 @@ mod test{
     fn write_response() {
         let transaction_id = 0x669f;
         let ttl = 300_u32;
-        let mut writer = DnsQueryWriter::new_answer(transaction_id, ttl as _);
-        writer.write();
+        let mut output_packet = DnsPacketWriter::new_answer(transaction_id, "axleos.com", ttl as _);
         let transaction_id_bytes = transaction_id.to_be_bytes();
         let ttl_bytes = ttl.to_be_bytes();
         assert_eq!(
-            writer.output_packet,
+            output_packet,
             vec![
                 // Header
                 //   Transaction ID
