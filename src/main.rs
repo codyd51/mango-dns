@@ -424,6 +424,11 @@ impl DnsRecord {
         }
     }
 
+    fn new_question_a(name: &str) -> Self {
+        Self::new_question(name, DnsRecordType::A, DnsRecordClass::Internet)
+    }
+}
+
 impl Display for DnsRecord {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let record_type = match self.record_type {
@@ -622,16 +627,17 @@ impl<'a> DnsQueryParser<'a> {
         let data_length = self.parse_u16();
         let record_data = match record_type {
             DnsRecordType::A => {
-                DnsRecordData::A(Ipv4Addr::from(self.parse_ipv4()))
+                Some(DnsRecordData::A(Ipv4Addr::from(self.parse_ipv4())))
             }
             DnsRecordType::AAAA => {
-                DnsRecordData::AAAA(Ipv6Addr::from(self.parse_ipv6()))
+                Some(DnsRecordData::AAAA(Ipv6Addr::from(self.parse_ipv6())))
             }
             DnsRecordType::NameServer => {
-                DnsRecordData::NameServer(FullyQualifiedDomainName(self.parse_name()))
+                Some(DnsRecordData::NameServer(FullyQualifiedDomainName(self.parse_name())))
             }
             DnsRecordType::CanonicalName => {
-                DnsRecordData::CanonicalName(FullyQualifiedDomainName(self.parse_name()))
+                Some(DnsRecordData::CanonicalName(FullyQualifiedDomainName(self.parse_name())))
+            }
             DnsRecordType::StartOfAuthority => {
                 Some(DnsRecordData::StartOfAuthority(
                     StartOfAuthorityRecordData::new(
@@ -659,7 +665,7 @@ impl<'a> DnsQueryParser<'a> {
             record_type,
             record_class,
             Some(ttl),
-            Some(record_data)
+            record_data
         )
     }
 
@@ -783,19 +789,26 @@ impl DnsPacketWriter {
 
         writer.output_packet
     }
+
     fn write_u8(&mut self, val: u8) {
-        self.output_packet.push(val);
+        Self::write_u8_to(val, &mut self.output_packet);
         self.cursor += 1;
     }
 
+    fn write_u8_to(val: u8, out: &mut Vec<u8>) {
+        out.push(val);
+    }
+
     fn write_u16(&mut self, val: u16) {
-        for &b in val.to_be_bytes().iter() {
-            self.write_u8(b);
-        }
+        self.write_buf(&val.to_be_bytes())
     }
 
     fn write_u32(&mut self, val: u32) {
-        for &b in val.to_be_bytes().iter() {
+        self.write_buf(&val.to_be_bytes())
+    }
+
+    fn write_buf(&mut self, buf: &[u8]) {
+        for &b in buf.iter() {
             self.write_u8(b);
         }
     }
@@ -919,7 +932,7 @@ impl DnsResolver {
 
     fn dns_socket_for_ipv6(ip: Ipv6Addr) -> SocketAddr {
         //format!("[{ip}]:53").parse().unwrap()
-        format!("[{ip}]:53").parse().unwrap()
+        SocketAddr::new(IpAddr::V6(ip), 53)
     }
 
     fn select_root_dns_server_socket_addr() -> SocketAddr {
@@ -932,8 +945,8 @@ impl DnsResolver {
         let mut response_buffer = [0; 1500];
         let (_src, header, mut body) = read_packet_to_buffer(&socket, &mut response_buffer);
 
-        println!("Got response from {socket:?}:");
-        println!("{header}");
+        //println!("Got response from {socket:?}:");
+        //println!("{header}");
 
         // Ensure it was the response we were expecting
         // TODO(PT): We'll need some kind of event-driven model to handle interleaved responses
@@ -945,11 +958,8 @@ impl DnsResolver {
     }
 
     fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsRecord) -> DnsResponse {
+        //println!("Connecting to: {dest:?}");
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-        // PT: For a reason I don't understand, if I try to bind directly to a root DNS server, it fails with:
-        // "Can't assign requested address"
-        // However, if I first bind to 0.0.0.0, then connect, it succeeds.
-        println!("Connecting to: {dest:?}");
         socket.connect(dest).unwrap();
 
         // Send the question
