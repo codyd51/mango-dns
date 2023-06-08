@@ -79,16 +79,17 @@ impl TryFrom<usize> for DnsOpcode {
 }
 
 #[derive(Debug)]
-enum DnsQueryType {
+enum DnsRecordType {
     A = 1,
     AAAA = 28,
     Pointer = 12,
     SVCB = 64,
     StartOfAuthority = 6,
     Https = 65,
+    NameServer = 2,
 }
 
-impl TryFrom<usize> for DnsQueryType {
+impl TryFrom<usize> for DnsRecordType {
     type Error = usize;
 
     fn try_from(value: usize) -> Result<Self, Self::Error> {
@@ -99,26 +100,30 @@ impl TryFrom<usize> for DnsQueryType {
             64 => Ok(Self::SVCB),
             6 => Ok(Self::StartOfAuthority),
             65 => Ok(Self::Https),
+            2 => Ok(Self::NameServer),
             _ => Err(value),
         }
     }
 }
 
 #[derive(Debug)]
-enum DnsQueryClass {
-    In = 1,
+enum DnsRecordClass {
+    Internet = 1,
 }
 
-impl TryFrom<usize> for DnsQueryClass {
+impl TryFrom<usize> for DnsRecordClass {
     type Error = usize;
 
     fn try_from(value: usize) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(Self::In),
+            1 => Ok(Self::Internet),
             _ => Err(value),
         }
     }
 }
+
+#[derive(Debug)]
+struct DnsRecordTtl(usize);
 
 #[derive(Debug)]
 struct DnsPacketHeaderRaw(BitArray<[u16; 6], Msb0>);
@@ -129,6 +134,8 @@ fn u16s(count: usize) -> usize {
 }
 
 impl DnsPacketHeaderRaw {
+    const HEADER_SIZE: usize = mem::size_of::<Self>();
+
     fn get_u16_at_u16_idx(&self, u16_idx: usize) -> usize {
         (self.0[u16s(u16_idx)..u16s(u16_idx + 1)].load::<u16>()).to_be() as _
     }
@@ -147,6 +154,10 @@ impl DnsPacketHeaderRaw {
 
     fn question_count(&self) -> usize {
         self.get_u16_at_u16_idx(2)
+    }
+
+    fn set_question_count(&mut self, val: u16) {
+        self.set_u16_at_u16_idx(2, val)
     }
 
     fn answer_count(&self) -> usize {
@@ -345,8 +356,62 @@ impl Display for DnsPacketHeader {
             };
             write!(f, "{} {noun} ", self.additional_record_count)?;
         }
+        Ok(())
+    }
+}
 
-        write!(f, "]")
+#[derive(Debug)]
+struct DnsQuestionRecord {
+    name: String,
+    query_type: DnsRecordType,
+    query_class: DnsRecordClass,
+}
+
+impl DnsQuestionRecord {
+    fn new(
+        name: &str,
+        query_type: DnsRecordType,
+        query_class: DnsRecordClass,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            query_type,
+            query_class,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum DnsRecordData {
+    A(Ipv4Addr),
+    AAAA(Ipv6Addr),
+    NameServer(String),
+}
+
+#[derive(Debug)]
+struct DnsRecord {
+    name: String,
+    record_type: DnsRecordType,
+    record_class: DnsRecordClass,
+    record_ttl: DnsRecordTtl,
+    record_data: DnsRecordData,
+}
+
+impl DnsRecord {
+    fn new(
+        name: &str,
+        record_type: DnsRecordType,
+        record_class: DnsRecordClass,
+        record_ttl: DnsRecordTtl,
+        record_data: DnsRecordData,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            record_type,
+            record_class,
+            record_ttl,
+            record_data,
+        }
     }
 }
 
@@ -420,12 +485,66 @@ impl<'a> DnsQueryParser<'a> {
         name_components.join(".")
     }
 
-    fn parse_query_type(&mut self) -> DnsQueryType {
-        DnsQueryType::try_from(self.parse_u16()).unwrap_or_else(|v| panic!("{v} is not a known query type"))
+    fn parse_name(&mut self) -> String {
+        let mut cursor = self.cursor;
+        let out = self.parse_name_at(&mut cursor);
+        self.cursor = cursor;
+        out
     }
 
-    fn parse_query_class(&mut self) -> DnsQueryClass {
-        DnsQueryClass::try_from(self.parse_u16()).unwrap_or_else(|v| panic!("{v} is not a known query class"))
+    fn parse_record_type(&mut self) -> DnsRecordType {
+        DnsRecordType::try_from(self.parse_u16()).unwrap_or_else(|v| panic!("{v} is not a known query type"))
+    }
+
+    fn parse_record_class(&mut self) -> DnsRecordClass {
+        DnsRecordClass::try_from(self.parse_u16()).unwrap_or_else(|v| panic!("{v} is not a known query class"))
+    }
+
+    fn parse_ttl(&mut self) -> DnsRecordTtl {
+        DnsRecordTtl(self.parse_u32())
+    }
+
+    fn parse_ipv4(&mut self) -> u32 {
+        self.parse_u32() as _
+    }
+
+    fn parse_ipv6(&mut self) -> [u8; 16] {
+        (0..16).map(|_| self.parse_u8() as u8).collect::<Vec<u8>>().try_into().unwrap()
+    }
+
+    fn parse_question(&mut self) -> DnsQuestionRecord {
+        DnsQuestionRecord::new(
+            &self.parse_name(),
+            self.parse_record_type(),
+            self.parse_record_class(),
+        )
+    }
+
+    fn parse_record(&mut self) -> DnsRecord {
+        let name = self.parse_name();
+        let record_type = self.parse_record_type();
+        let record_class = self.parse_record_class();
+        let ttl = self.parse_ttl();
+        let data_length = self.parse_u16();
+        let record_data = match record_type {
+            DnsRecordType::A => {
+                DnsRecordData::A(Ipv4Addr::from(self.parse_ipv4()))
+            }
+            DnsRecordType::AAAA => {
+                DnsRecordData::AAAA(Ipv6Addr::from(self.parse_ipv6()))
+            }
+            DnsRecordType::NameServer => {
+                DnsRecordData::NameServer(self.parse_name())
+            }
+            _ => todo!("{record_type:?}"),
+        };
+        DnsRecord::new(
+            &name,
+            record_type,
+            record_class,
+            ttl,
+            record_data
+        )
     }
 }
 
