@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 use std::mem;
-use std::net::{SocketAddr, TcpStream, UdpSocket};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket};
 use bitvec::prelude::*;
 use num_traits::PrimInt;
 
@@ -41,6 +41,22 @@ The one in axle seems like it's nearly a DNS resolver:
 - It has a cache for responding to local clients
 
 */
+
+const ROOT_DNS_SERVERS: [&str; 13] = [
+    "198.41.0.4",
+    "199.9.14.201",
+    "192.33.4.12",
+    "199.7.91.13",
+    "192.203.230.10",
+    "192.5.5.241",
+    "192.112.36.4",
+    "198.97.190.53",
+    "192.36.148.17",
+    "192.58.128.30",
+    "193.0.14.129",
+    "199.7.83.42",
+    "202.12.27.33",
+];
 
 #[derive(Debug, PartialEq, Eq)]
 enum DnsOpcode {
@@ -491,13 +507,9 @@ impl DnsQueryWriter {
 }
 
 fn main() -> std::io::Result<()> {
-    println!("trying to connect...");
-    let root_dns_server_socket = TcpStream::connect("199.9.14.201:53").unwrap();
-    println!("Connection to root DNS server: {root_dns_server_socket:?}");
-    //let root_dns_server_socket = UdpSocket::bind("199.9.14.201:53").unwrap();
     let root_dns_server_socket = UdpSocket::bind("0.0.0.0:53").unwrap();
-    //let remote_addr: SocketAddr = "199.9.14.201:53".parse().unwrap();
-    let remote_addr: SocketAddr = "1.1.1.1:53".parse().unwrap();
+    // TODO(PT): Pick a random root server
+    let remote_addr: SocketAddr = format!("{}:53", ROOT_DNS_SERVERS[0]).parse().unwrap();
     root_dns_server_socket.connect(remote_addr).unwrap();
     println!("Connection to root DNS server: {root_dns_server_socket:?}");
 
