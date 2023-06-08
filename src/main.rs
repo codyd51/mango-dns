@@ -994,7 +994,6 @@ impl DnsResolver {
         Self::await_and_parse_response(&socket, transaction_id).1
     }
 
-    fn resolve_question(&self, question: &DnsRecord) -> DnsRecordData {
     fn get_record_from_cache_for_recursive_resolution(
         &self,
         fqdn: &FullyQualifiedDomainName,
@@ -1050,22 +1049,12 @@ impl DnsResolver {
         }
     }
 
+    fn resolve_question(&self, question: &DnsRecord) -> Option<DnsRecordData> {
         // First, check whether the answer is in the cache
-        {
-            let mut cache = self.cache.borrow_mut();
-            let requested_fqdn = FullyQualifiedDomainName(question.name.clone());
-            if let Some(cached_records) = cache.get(&requested_fqdn) {
-                // Pick the first cached record with a type we like
-                println!("Resolving {requested_fqdn} from cache");
-                return cached_records
-                    .iter()
-                    .find(|r| r.record_type == DnsRecordType::A)
-                    .expect("Failed to find a cached A record")
-                    .record_data
-                    .as_ref()
-                    .unwrap()
-                    .clone();
-            }
+        let requested_fqdn = FullyQualifiedDomainName(question.name.clone());
+        if let Some(cached_record) = self.get_record_from_cache_for_returning_response(&requested_fqdn, &question.record_type) {
+            //println!("Serving question from cache: {requested_fqdn}");
+            return Some(cached_record);
         }
 
         // Start off with querying a root DNS server
@@ -1093,12 +1082,14 @@ impl DnsResolver {
                 }
 
                 // And return the first answer
-                return response
-                    .answer_records[0]
-                    .record_data
-                    .as_ref()
-                    .unwrap()
-                    .clone();
+                return Some(
+                    response
+                        .answer_records[0]
+                        .record_data
+                        .as_ref()
+                        .unwrap()
+                        .clone()
+                );
             }
 
             // The server we just queried will tell us who the authority is for the next component of the domain name
@@ -1110,17 +1101,13 @@ impl DnsResolver {
             match &authority_record.record_data.as_ref().unwrap() {
                 DnsRecordData::NameServer(authority_name) => {
                     // (This should hit the cache, since the nameserver's A record should have been provided by the root server's additional records)
-                    // TODO(PT): Explicit 'get_from_cache'
-                    //let record_data = self.resolve_question(&DnsRecord::new(&authority_name.0, DnsRecordType::A, DnsRecordClass::Internet));
-                    let record_data = self.resolve_question(
-                        &DnsRecord::new_question(
-                            &authority_name.0,
-                            DnsRecordType::A,
-                            DnsRecordClass::Internet,
-                        )
-                        //&DnsRecord::new(&authority_name.0, DnsRecordType::A, DnsRecordClass::Internet)
-                    );
-                    match record_data {
+                    //println!("Getting from cache for recursive resolution: {authority_name}");
+                    let name_server_record_data = self.get_record_from_cache_for_recursive_resolution(&authority_name).unwrap_or_else(|| {
+                        println!("\t\tCouldn't find info for NS {authority_name} in cache, will resolve...");
+                        self.resolve_question(&DnsRecord::new_question_a(&authority_name.0)).unwrap()
+                    });
+
+                    match name_server_record_data {
                         DnsRecordData::A(ipv4_addr) => {
                             server_addr = Self::dns_socket_for_ipv4(ipv4_addr);
                         }
