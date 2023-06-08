@@ -432,15 +432,17 @@ impl<'a> DnsQueryParser<'a> {
 struct DnsQueryWriter {
     output_packet: Vec<u8>,
     cursor: usize,
-    ttl: usize,
 }
 
 impl DnsQueryWriter {
-    fn new_answer(transaction_id: u16, ttl: usize) -> Self {
+    fn new_answer(
+        transaction_id: u16,
+        name: &str,
+        ttl: usize
+    ) -> Vec<u8> {
         let mut out = Self {
             output_packet: Vec::new(),
             cursor: 0,
-            ttl,
         };
         let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
         header.set_identifier(transaction_id);
@@ -451,7 +453,46 @@ impl DnsQueryWriter {
         let header_bytes_len = header_bytes.len();
         out.output_packet.append(&mut header_bytes);
         out.cursor += header_bytes_len;
-        out
+
+        out.write_name(name);
+        // Type: A
+        out.write_u16(1);
+
+        // Class: IN
+        out.write_u16(1);
+
+        // TTL
+        out.write_u32(ttl as _);
+
+        // IP
+        out.write_ipv4_addr(0xac_43_bd_73);
+
+        out.output_packet
+    }
+
+    fn new_question(transaction_id: u16, name: &str) -> Vec<u8> {
+        let mut out = Self {
+            output_packet: Vec::new(),
+            cursor: 0,
+        };
+        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
+        header.set_identifier(transaction_id);
+        header.set_is_response(false);
+        header.set_opcode(0);
+        header.set_question_count(1);
+        let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
+        let header_bytes_len = header_bytes.len();
+        out.output_packet.append(&mut header_bytes);
+        out.cursor += header_bytes_len;
+
+        out.write_name(name);
+        // Type: A
+        out.write_u16(1);
+
+        // Class: IN
+        out.write_u16(1);
+
+        out.output_packet
     }
 
     fn write_u8(&mut self, val: u8) {
@@ -471,15 +512,8 @@ impl DnsQueryWriter {
         }
     }
 
-    fn read<'a, T: BitStore, O: BitOrder>(s: &mut &'a BitSlice<T, O>, n: usize) -> &'a BitSlice<T, O> {
-        let result = &s[..n];
-        *s = &s[n..];
-        result
-    }
-
-    fn write(&mut self) {
-        let domain = "axleos.com";
-        for label in domain.split(".") {
+    fn write_name(&mut self, name: &str) {
+        for label in name.split(".") {
             // Write label length, then the label data
             self.write_u8(label.len() as _);
             for ch in label.chars() {
@@ -489,20 +523,16 @@ impl DnsQueryWriter {
         // Null byte to terminate labels
         self.write_u8('\0' as _);
 
-        // Type: A
-        self.write_u16(1);
+    }
 
-        // Class: IN
-        self.write_u16(1);
-
-        // TTL
-        self.write_u32(self.ttl as _);
-
+    fn write_ipv4_addr(&mut self, addr: u32) {
         // IP address length
         self.write_u16(4);
 
         // IP address of the record
-        self.write_u32(0xac_43_bd_73);
+        self.write_u32(addr);
+    }
+}
     }
 }
 
