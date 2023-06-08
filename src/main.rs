@@ -76,6 +76,7 @@ enum DnsRecordType {
     StartOfAuthority = 6,
     Https = 65,
     NameServer = 2,
+    CanonicalName = 5,
 }
 
 impl TryFrom<usize> for DnsRecordType {
@@ -90,6 +91,7 @@ impl TryFrom<usize> for DnsRecordType {
             6 => Ok(Self::StartOfAuthority),
             65 => Ok(Self::Https),
             2 => Ok(Self::NameServer),
+            5 => Ok(Self::CanonicalName),
             _ => Err(value),
         }
     }
@@ -384,6 +386,7 @@ enum DnsRecordData {
     A(Ipv4Addr),
     AAAA(Ipv6Addr),
     NameServer(FullyQualifiedDomainName),
+    CanonicalName(FullyQualifiedDomainName),
 }
 
 #[derive(Debug, Clone)]
@@ -574,6 +577,9 @@ impl<'a> DnsQueryParser<'a> {
             }
             DnsRecordType::NameServer => {
                 DnsRecordData::NameServer(FullyQualifiedDomainName(self.parse_name()))
+            }
+            DnsRecordType::CanonicalName => {
+                DnsRecordData::CanonicalName(FullyQualifiedDomainName(self.parse_name()))
             }
             _ => todo!("{record_type:?}"),
         };
