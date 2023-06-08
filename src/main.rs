@@ -1094,6 +1094,10 @@ impl DnsResolver {
 
             // The server we just queried will tell us who the authority is for the next component of the domain name
             // Pick the first authority that the server mentioned
+            if response.authority_records.len() == 0 {
+                println!("\t\tNo authority records returned, question: {question}, response: {response}");
+                return None;
+            }
             let authority_record = &response.authority_records[0];
 
             println!("\t\tFound authority for {}: {authority_record}", authority_record.name);
