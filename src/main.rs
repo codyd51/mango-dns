@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::mem;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, TcpListener, TcpStream, UdpSocket};
 use bitvec::prelude::*;
 use num_traits::PrimInt;
 use rand::{random, Rng};
@@ -38,6 +38,8 @@ enum DnsRecordType {
     Https = 65,
     NameServer = 2,
     CanonicalName = 5,
+    DelegationSigner = 43,
+    EDNSOpt = 41,
 }
 
 impl TryFrom<usize> for DnsRecordType {
@@ -53,6 +55,8 @@ impl TryFrom<usize> for DnsRecordType {
             65 => Ok(Self::Https),
             2 => Ok(Self::NameServer),
             5 => Ok(Self::CanonicalName),
+            43 => Ok(Self::DelegationSigner),
+            41 => Ok(Self::EDNSOpt),
             _ => Err(value),
         }
     }
