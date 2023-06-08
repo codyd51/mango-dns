@@ -819,16 +819,24 @@ impl DnsPacketWriter {
     }
 
     fn write_name(&mut self, name: &str) {
+        self.cursor += Self::write_name_to(name, &mut self.output_packet);
+    }
+
+    fn write_name_to(name: &str, out: &mut Vec<u8>) -> usize {
+        let mut len = 0;
         for label in name.split(".") {
             // Write label length, then the label data
-            self.write_u8(label.len() as _);
+            Self::write_u8_to(label.len() as _, out);
+            len += 1;
             for ch in label.chars() {
-                self.write_u8(ch as _);
+                Self::write_u8_to(ch as _, out);
+                len += 1;
             }
         }
         // Null byte to terminate labels
-        self.write_u8('\0' as _);
-
+        Self::write_u8_to('\0' as _, out);
+        len += 1;
+        len
     }
 
     fn write_ipv4_addr_from_u32(&mut self, addr: u32) {
@@ -841,6 +849,10 @@ impl DnsPacketWriter {
 
     fn write_ipv4_addr(&mut self, addr: Ipv4Addr) {
         self.write_ipv4_addr_from_u32(addr.into())
+    }
+
+    fn write_ipv6_addr(&mut self, addr: Ipv6Addr) {
+        self.write_buf(&addr.octets())
     }
 }
 
