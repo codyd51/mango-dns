@@ -62,6 +62,18 @@ impl TryFrom<usize> for DnsRecordType {
     }
 }
 
+impl From<DnsRecordData> for DnsRecordType {
+    fn from(value: DnsRecordData) -> Self {
+        match value {
+            DnsRecordData::A(_) => DnsRecordType::A,
+            DnsRecordData::AAAA(_) => DnsRecordType::AAAA,
+            DnsRecordData::NameServer(_) => DnsRecordType::NameServer,
+            DnsRecordData::CanonicalName(_) => DnsRecordType::CanonicalName,
+            DnsRecordData::StartOfAuthority(_) => DnsRecordType::StartOfAuthority,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 enum DnsRecordClass {
     Internet = 1,
@@ -1190,7 +1202,7 @@ fn main() -> std::io::Result<()> {
                     let response = response.unwrap();
                     let response_record = DnsRecord::new(
                         &question.name.clone(),
-                        DnsRecordType::A,
+                        response.clone().into(),
                         DnsRecordClass::Internet,
                         Some(DnsRecordTtl(300)),
                         Some(response),
