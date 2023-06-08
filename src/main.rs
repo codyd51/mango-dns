@@ -645,7 +645,14 @@ impl<'a> DnsQueryParser<'a> {
                     )
                 ))
             }
-            _ => todo!("{record_type:?}"),
+            _ => {
+                // Skip past the bytes we're ignoring
+                //println!("Doing stub parsing of unhandled record type {record_type:?}");
+                for _ in 0..data_length {
+                    self.parse_u8();
+                }
+                None
+            },
         };
         DnsRecord::new(
             &name,
