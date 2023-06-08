@@ -8,45 +8,6 @@ use num_traits::PrimInt;
 use rand::{random, Rng};
 use rand::seq::SliceRandom;
 
-/*
-# Set DNS server
-networksetup -setdnsservers Wi-Fi 127.0.0.1
-networksetup -setdnsservers Wi-Fi 1.1.1.1
-# (Tried using the Network Configuration -> DNS menu in System Settings, but it only worked sporadically)
-
-# Report DNS configuration
-scutil --dns
-
-# DNS code in axle looks like it already does it?
-
-typedef struct dns_packet {
-    uint16_t identifier;
-
-    uint16_t query_response_flag:1;
-    uint16_t opcode:4;
-    uint16_t authoritative_answer_flag:1;
-    uint16_t truncation_flag:1;
-    uint16_t recursion_desired_flag:1;
-    uint16_t recursion_available_flag:1;
-    uint16_t zero:3;
-    uint16_t response_code:4;
-
-    uint16_t question_count;
-    uint16_t answer_count;
-    uint16_t authority_count;
-    uint16_t additional_record_count;
-
-    uint8_t data[];
-} __attribute__((packed)) dns_packet_t;
-
-The one in axle seems like it's nearly a DNS resolver:
-- It parses traffic flowing over my local network (queries and responses)
-- It can construct packets (to send queries)
-- It has a cache for responding to local clients
-
-*/
-
-
 #[derive(Debug, PartialEq, Eq)]
 enum DnsOpcode {
     Query = 0,
@@ -113,6 +74,14 @@ impl TryFrom<usize> for DnsRecordClass {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DnsPacketRecordType {
+    QuestionRecord,
+    AnswerRecord,
+    AuthorityRecord,
+    AdditionalRecord,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct DnsRecordTtl(usize);
 
@@ -143,28 +112,36 @@ impl DnsPacketHeaderRaw {
         self.set_u16_at_u16_idx(0, val)
     }
 
-    fn question_count(&self) -> usize {
+    fn question_record_count(&self) -> usize {
         self.get_u16_at_u16_idx(2)
     }
 
-    fn set_question_count(&mut self, val: u16) {
+    fn set_question_record_count(&mut self, val: u16) {
         self.set_u16_at_u16_idx(2, val)
     }
 
-    fn answer_count(&self) -> usize {
+    fn answer_record_count(&self) -> usize {
         self.get_u16_at_u16_idx(3)
     }
 
-    fn set_answer_count(&mut self, val: u16) {
+    fn set_answer_record_count(&mut self, val: u16) {
         self.set_u16_at_u16_idx(3, val)
     }
 
-    fn authority_count(&self) -> usize {
+    fn authority_record_count(&self) -> usize {
         self.get_u16_at_u16_idx(4)
+    }
+
+    fn set_authority_record_count(&mut self, val: u16) {
+        self.set_u16_at_u16_idx(4, val)
     }
 
     fn additional_record_count(&self) -> usize {
         self.get_u16_at_u16_idx(5)
+    }
+
+    fn set_additional_record_count(&mut self, val: u16) {
+        self.set_u16_at_u16_idx(5, val)
     }
 
     fn packed_flags(&self) -> BitArray<u16, Msb0> {
@@ -284,9 +261,9 @@ impl From<&DnsPacketHeaderRaw> for DnsPacketHeader {
             opcode: DnsOpcode::try_from(raw.opcode()).unwrap_or_else(|op| panic!("Unexpected DNS opcode: {}", op)),
             is_truncated: raw.is_truncated(),
             is_recursion_desired: raw.is_recursion_desired(),
-            question_count: raw.question_count(),
-            answer_count: raw.answer_count(),
-            authority_count: raw.authority_count(),
+            question_count: raw.question_record_count(),
+            answer_count: raw.answer_record_count(),
+            authority_count: raw.authority_record_count(),
             additional_record_count: raw.additional_record_count(),
         }
     }
@@ -351,27 +328,6 @@ impl Display for DnsPacketHeader {
     }
 }
 
-#[derive(Debug)]
-struct DnsQuestionRecord {
-    name: String,
-    query_type: DnsRecordType,
-    query_class: DnsRecordClass,
-}
-
-impl DnsQuestionRecord {
-    fn new(
-        name: &str,
-        query_type: DnsRecordType,
-        query_class: DnsRecordClass,
-    ) -> Self {
-        Self {
-            name: name.to_string(),
-            query_type,
-            query_class,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct FullyQualifiedDomainName(String);
 
@@ -394,8 +350,9 @@ struct DnsRecord {
     name: String,
     record_type: DnsRecordType,
     record_class: DnsRecordClass,
-    record_ttl: DnsRecordTtl,
-    record_data: DnsRecordData,
+    // The below fields aren't valid for Question records
+    record_ttl: Option<DnsRecordTtl>,
+    record_data: Option<DnsRecordData>,
 }
 
 impl DnsRecord {
@@ -403,8 +360,8 @@ impl DnsRecord {
         name: &str,
         record_type: DnsRecordType,
         record_class: DnsRecordClass,
-        record_ttl: DnsRecordTtl,
-        record_data: DnsRecordData,
+        record_ttl: Option<DnsRecordTtl>,
+        record_data: Option<DnsRecordData>,
     ) -> Self {
         Self {
             name: name.to_string(),
@@ -412,6 +369,20 @@ impl DnsRecord {
             record_class,
             record_ttl,
             record_data,
+        }
+    }
+
+    fn new_question(
+        name: &str,
+        record_type: DnsRecordType,
+        record_class: DnsRecordClass,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            record_type,
+            record_class,
+            record_ttl: None,
+            record_data: None,
         }
     }
 }
@@ -554,8 +525,8 @@ impl<'a> DnsQueryParser<'a> {
         (0..16).map(|_| self.parse_u8() as u8).collect::<Vec<u8>>().try_into().unwrap()
     }
 
-    fn parse_question(&mut self) -> DnsQuestionRecord {
-        DnsQuestionRecord::new(
+    fn parse_question(&mut self) -> DnsRecord {
+        DnsRecord::new_question(
             &self.parse_name(),
             self.parse_record_type(),
             self.parse_record_class(),
@@ -587,8 +558,8 @@ impl<'a> DnsQueryParser<'a> {
             &name,
             record_type,
             record_class,
-            ttl,
-            record_data
+            Some(ttl),
+            Some(record_data)
         )
     }
 
@@ -624,135 +595,101 @@ impl<'a> DnsQueryParser<'a> {
     }
 }
 
+struct DnsPacketWriterParams {
+    transaction_id: u16,
+    opcode: DnsOpcode,
+    direction: PacketDirection,
+}
+
+impl DnsPacketWriterParams {
+    fn new(
+        transaction_id: u16,
+        opcode: DnsOpcode,
+        direction: PacketDirection,
+    ) -> Self {
+        Self {
+            transaction_id,
+            opcode,
+            direction,
+        }
+    }
+}
+
 struct DnsPacketWriter {
     output_packet: Vec<u8>,
     cursor: usize,
 }
 
 impl DnsPacketWriter {
-    fn new_answer(
-        transaction_id: u16,
-        name: &str,
-        ttl: usize
-    ) -> Vec<u8> {
-        let mut out = Self {
-            output_packet: Vec::new(),
-            cursor: 0,
-        };
-        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
-        header.set_identifier(transaction_id);
-        header.set_is_response(true);
-        header.set_opcode(0);
-        header.set_answer_count(1);
-        let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
-        let header_bytes_len = header_bytes.len();
-        out.output_packet.append(&mut header_bytes);
-        out.cursor += header_bytes_len;
-
-        out.write_name(name);
-        // Type: A
-        out.write_u16(1);
-
-        // Class: IN
-        out.write_u16(1);
-
-        // TTL
-        out.write_u32(ttl as _);
-
-        // IP
-        out.write_ipv4_addr_from_u32(0xac_43_bd_73);
-
-        out.output_packet
-    }
-
-    fn new_question(transaction_id: u16, name: &str) -> Vec<u8> {
-        let mut out = Self {
-            output_packet: Vec::new(),
-            cursor: 0,
-        };
-        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
-        header.set_identifier(transaction_id);
-        header.set_is_response(false);
-        header.set_opcode(0);
-        header.set_question_count(1);
-        let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
-        let header_bytes_len = header_bytes.len();
-        out.output_packet.append(&mut header_bytes);
-        out.cursor += header_bytes_len;
-
-        out.write_name(name);
-        // Type: A
-        out.write_u16(1);
-
-        // Class: IN
-        out.write_u16(1);
-
-        out.output_packet
-    }
-
-    fn new_packet_from_record(transaction_id: u16, record: &DnsRecord) -> Vec<u8> {
-        let mut out = Self {
-            output_packet: Vec::new(),
-            cursor: 0,
-        };
-        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
-        header.set_identifier(transaction_id);
-        header.set_is_response(true);
-        header.set_opcode(0);
-        header.set_answer_count(1);
-        let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
-        let header_bytes_len = header_bytes.len();
-        out.output_packet.append(&mut header_bytes);
-        out.cursor += header_bytes_len;
-
-        // Record name
-        out.write_name(&record.name);
-        // Record type
-        out.write_u16(record.record_type as u16);
-        // Record class
-        out.write_u16(record.record_class as u16);
-        // TTL
-        out.write_u32(record.record_ttl.0 as _);
-
-        match &record.record_data {
-            DnsRecordData::A(ipv4_addr) => {
-                // Data size
-                out.write_ipv4_addr(*ipv4_addr);
-            },
-            DnsRecordData::CanonicalName(fqdn) => {
-                todo!();
-            }
-            _ => todo!(),
+    fn new_packet_from_records(params: DnsPacketWriterParams, record_types_and_records: Vec<(DnsPacketRecordType, &DnsRecord)>) -> Vec<u8> {
+        let mut question_record_count = 0;
+        let mut answer_record_count = 0;
+        let mut authority_record_count = 0;
+        let mut additional_record_count = 0;
+        for (record_type, _) in record_types_and_records.iter() {
+            match record_type {
+                DnsPacketRecordType::QuestionRecord => question_record_count += 1,
+                DnsPacketRecordType::AnswerRecord => answer_record_count += 1,
+                DnsPacketRecordType::AuthorityRecord => authority_record_count += 1,
+                DnsPacketRecordType::AdditionalRecord => additional_record_count += 1,
+            };
         }
 
-        out.output_packet
-    }
+        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
+        header.set_identifier(params.transaction_id);
+        header.set_is_response(matches!(params.direction, PacketDirection::Response(_)));
+        header.set_opcode(params.opcode as _);
 
-    fn new_packet_from_question(transaction_id: u16, question: &DnsQuestionRecord) -> Vec<u8> {
-        let mut out = Self {
+        header.set_question_record_count(question_record_count);
+        header.set_answer_record_count(answer_record_count);
+        header.set_authority_record_count(authority_record_count);
+        header.set_additional_record_count(additional_record_count);
+
+        let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
+        let header_bytes_len = header_bytes.len();
+
+        let mut writer = Self {
             output_packet: Vec::new(),
             cursor: 0,
         };
-        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
-        header.set_identifier(transaction_id);
-        header.set_is_response(false);
-        header.set_opcode(0);
-        header.set_question_count(1);
-        let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
-        let header_bytes_len = header_bytes.len();
-        out.output_packet.append(&mut header_bytes);
-        out.cursor += header_bytes_len;
+        writer.output_packet.append(&mut header_bytes);
+        writer.cursor += header_bytes_len;
 
-        // Record name
-        out.write_name(&question.name);
-        // Record type
-        out.write_u16(question.query_type as u16);
-        // Record class
-        out.write_u16(question.query_class as u16);
+        for (record_type, record) in record_types_and_records.iter() {
+            // Record name
+            writer.write_name(&record.name);
+            // Record type
+            writer.write_u16(record.record_type as u16);
+            // Record class
+            writer.write_u16(record.record_class as u16);
 
-        out.output_packet
+            // Questions always stop here
+            /*
+            if *record_type == DnsPacketRecordType::QuestionRecord {
+                continue;
+            }
+
+             */
+            if let Some(ttl) = record.record_ttl {
+                // TTL
+                writer.write_u32(ttl.0 as _);
+            }
+            if let Some(record_data) = &record.record_data {
+                match &record_data {
+                    DnsRecordData::A(ipv4_addr) => {
+                        // Data size
+                        writer.write_ipv4_addr(*ipv4_addr);
+                    },
+                    DnsRecordData::CanonicalName(fqdn) => {
+                        todo!();
+                    }
+                    _ => todo!(),
+                }
+            }
+        }
+
+        writer.output_packet
     }
-
     fn write_u8(&mut self, val: u8) {
         self.output_packet.push(val);
         self.cursor += 1;
@@ -812,7 +749,7 @@ fn read_packet_to_buffer<'a>(socket: &UdpSocket, buffer: &'a mut [u8]) -> (Socke
 /// 'High-level' representation of a response from another server
 #[derive(Debug)]
 struct DnsResponse {
-    question_records: Vec<DnsQuestionRecord>,
+    question_records: Vec<DnsRecord>,
     answer_records: Vec<DnsRecord>,
     authority_records: Vec<DnsRecord>,
     additional_records: Vec<DnsRecord>,
@@ -820,7 +757,7 @@ struct DnsResponse {
 
 impl DnsResponse {
     fn new(
-        question_records: Vec<DnsQuestionRecord>,
+        question_records: Vec<DnsRecord>,
         answer_records: Vec<DnsRecord>,
         authority_records: Vec<DnsRecord>,
         additional_records: Vec<DnsRecord>,
@@ -914,7 +851,7 @@ impl DnsResolver {
         (header, response)
     }
 
-    fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsQuestionRecord) -> DnsResponse {
+    fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsRecord) -> DnsResponse {
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         // PT: For a reason I don't understand, if I try to bind directly to a root DNS server, it fails with:
         // "Can't assign requested address"
@@ -925,12 +862,19 @@ impl DnsResolver {
         // Send the question
         let mut rng = rand::thread_rng();
         let transaction_id = rng.gen_range(0..u16::MAX) as u16;
-        let packet = DnsPacketWriter::new_packet_from_question(transaction_id, question);
+        let packet = DnsPacketWriter::new_packet_from_records(
+            DnsPacketWriterParams::new(
+                transaction_id,
+                DnsOpcode::Query,
+                PacketDirection::Query,
+            ),
+            vec![(DnsPacketRecordType::QuestionRecord, question)]
+        );
         socket.send(&packet).expect("Failed to send question to {dest}");
         Self::await_and_parse_response(&socket, transaction_id).1
     }
 
-    fn resolve_question(&self, question: &DnsQuestionRecord) -> DnsRecordData {
+    fn resolve_question(&self, question: &DnsRecord) -> DnsRecordData {
         // First, check whether the answer is in the cache
         {
             let mut cache = self.cache.borrow_mut();
@@ -938,7 +882,14 @@ impl DnsResolver {
             if let Some(cached_records) = cache.get(&requested_fqdn) {
                 // Pick the first cached record with a type we like
                 println!("Resolving {requested_fqdn} from cache");
-                return cached_records.iter().find(|r| r.record_type == DnsRecordType::A).expect("Failed to find a cached A record").record_data.clone();
+                return cached_records
+                    .iter()
+                    .find(|r| r.record_type == DnsRecordType::A)
+                    .expect("Failed to find a cached A record")
+                    .record_data
+                    .as_ref()
+                    .unwrap()
+                    .clone();
             }
         }
 
@@ -967,7 +918,12 @@ impl DnsResolver {
                 }
 
                 // And return the first answer
-                return response.answer_records[0].record_data.clone();
+                return response
+                    .answer_records[0]
+                    .record_data
+                    .as_ref()
+                    .unwrap()
+                    .clone();
             }
 
             // The server we just queried will tell us who the authority is for the next component of the domain name
@@ -976,11 +932,19 @@ impl DnsResolver {
 
             println!("Found authority for {}: {:?}", authority_record.name, authority_record);
 
-            match &authority_record.record_data {
+            match &authority_record.record_data.as_ref().unwrap() {
                 DnsRecordData::NameServer(authority_name) => {
                     // (This should hit the cache, since the nameserver's A record should have been provided by the root server's additional records)
                     // TODO(PT): Explicit 'get_from_cache'
-                    let record_data = self.resolve_question(&DnsQuestionRecord::new(&authority_name.0, DnsRecordType::A, DnsRecordClass::Internet));
+                    //let record_data = self.resolve_question(&DnsRecord::new(&authority_name.0, DnsRecordType::A, DnsRecordClass::Internet));
+                    let record_data = self.resolve_question(
+                        &DnsRecord::new_question(
+                            &authority_name.0,
+                            DnsRecordType::A,
+                            DnsRecordClass::Internet,
+                        )
+                        //&DnsRecord::new(&authority_name.0, DnsRecordType::A, DnsRecordClass::Internet)
+                    );
                     match record_data {
                         DnsRecordData::A(ipv4_addr) => {
                             server_addr = Self::dns_socket_for_ipv4(ipv4_addr);
@@ -1008,10 +972,10 @@ fn main() -> std::io::Result<()> {
 
     let resolver = DnsResolver::new();
     /*
-    let data = resolver.resolve_question(&DnsQuestionRecord::new(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
-    resolver.resolve_question(&DnsQuestionRecord::new(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
+    let data = resolver.resolve_question(&DnsRecord::new_question(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
+    resolver.resolve_question(&DnsRecord::new_question(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
     return Ok(());
-    */
+     */
 
     // Ensure the packet header is defined correctly
     let dns_packet_header_size = mem::size_of::<DnsPacketHeaderRaw>();
@@ -1030,8 +994,8 @@ fn main() -> std::io::Result<()> {
                 let body = body_parser.parse_response(&header);
                 for (i, question) in body.question_records.iter().enumerate() {
                     // Ignore questions about anything other than A/AAAA records
-                    if ![DnsRecordType::A, DnsRecordType::AAAA].contains(&question.query_type) {
-                        println!("Dropping query for unsupported record type {:?}", question.query_type);
+                    if ![DnsRecordType::A, DnsRecordType::AAAA].contains(&question.record_type) {
+                        println!("Dropping query for unsupported record type {:?}", question.record_type);
                         continue;
                     }
 
@@ -1041,10 +1005,24 @@ fn main() -> std::io::Result<()> {
                         &question.name.clone(),
                         DnsRecordType::A,
                         DnsRecordClass::Internet,
-                        DnsRecordTtl(300),
-                        response,
+                        Some(DnsRecordTtl(300)),
+                        Some(response),
                     );
-                    let mut response_packet = DnsPacketWriter::new_packet_from_record(header.identifier as _, &response_record);
+                    let params = DnsPacketWriterParams::new(
+                        header.identifier as u16,
+                        DnsOpcode::Query,
+                        PacketDirection::Response(
+                            ResponseFields::new(
+                                true,
+                                false,
+                                0
+                            )
+                        )
+                    );
+                    let mut response_packet = DnsPacketWriter::new_packet_from_records(
+                        params,
+                        vec![(DnsPacketRecordType::AnswerRecord, &response_record)]
+                    );
                     println!("Responding to DNS query! Answer = {response_record:?}");
                     socket.send_to(&response_packet, &src).unwrap();
                 }
@@ -1061,7 +1039,8 @@ fn main() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod test{
-    use crate::{DnsOpcode, DnsPacketHeader, DnsPacketHeaderRaw, DnsPacketWriter, PacketDirection};
+    use std::net::Ipv4Addr;
+    use crate::{DnsOpcode, DnsPacketHeader, DnsPacketHeaderRaw, DnsPacketRecordType, DnsPacketWriter, DnsPacketWriterParams, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType, PacketDirection, ResponseFields};
 
     #[test]
     fn parse_header() {
@@ -1086,7 +1065,30 @@ mod test{
     fn write_response() {
         let transaction_id = 0x669f;
         let ttl = 300_u32;
-        let mut output_packet = DnsPacketWriter::new_answer(transaction_id, "axleos.com", ttl as _);
+        //let mut output_packet = DnsPacketWriter::new_answer(transaction_id, "axleos.com", ttl as _);
+
+        let a_record = DnsRecordData::A(Ipv4Addr::new(172, 67, 189, 115));
+        let answer_record = DnsRecord::new(
+            &"axleos.com",
+            DnsRecordType::A,
+            DnsRecordClass::Internet,
+            Some(DnsRecordTtl(300)),
+            Some(a_record),
+        );
+        let mut output_packet = DnsPacketWriter::new_packet_from_records(
+            DnsPacketWriterParams::new(
+                transaction_id,
+                DnsOpcode::Query,
+                PacketDirection::Response(
+                    ResponseFields::new(
+                        true,
+                        false,
+                        0
+                    )
+                ),
+            ),
+                vec![(DnsPacketRecordType::AnswerRecord, &answer_record)]
+        );
         let transaction_id_bytes = transaction_id.to_be_bytes();
         let ttl_bytes = ttl.to_be_bytes();
         assert_eq!(
