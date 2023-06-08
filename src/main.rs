@@ -995,6 +995,61 @@ impl DnsResolver {
     }
 
     fn resolve_question(&self, question: &DnsRecord) -> DnsRecordData {
+    fn get_record_from_cache_for_recursive_resolution(
+        &self,
+        fqdn: &FullyQualifiedDomainName,
+    ) -> Option<DnsRecordData> {
+        // PT: My ISP doesn't support IPv6, so don't try to follow AAAA records during resolution
+        self.get_record_from_cache(
+            fqdn,
+            &[
+                DnsRecordType::A,
+                DnsRecordType::CanonicalName,
+            ]
+        )
+    }
+
+    fn get_record_from_cache_for_returning_response(
+        &self,
+        fqdn: &FullyQualifiedDomainName,
+        requested_record_type: &DnsRecordType,
+    ) -> Option<DnsRecordData> {
+        self.get_record_from_cache(
+            fqdn,
+            &[*requested_record_type]
+        )
+    }
+
+    fn get_record_from_cache(
+        &self,
+        fqdn: &FullyQualifiedDomainName,
+        allowed_record_types: &[DnsRecordType],
+    ) -> Option<DnsRecordData> {
+        let mut cache = self.cache.borrow_mut();
+        if let Some(cached_records) = cache.get(&fqdn) {
+            // Pick the first cached record with a type we like
+            //println!("Resolving {fqdn} from cache");
+
+            cached_records
+                .iter()
+                .find(|r| {
+                    allowed_record_types.contains(&r.record_type)
+                })
+                .map_or(
+                    None,
+                    |r| {
+                        Some(r.record_data
+                            .as_ref()
+                            .unwrap()
+                            .clone())
+                    }
+                )
+        }
+        else {
+            None
+        }
+    }
+
         // First, check whether the answer is in the cache
         {
             let mut cache = self.cache.borrow_mut();
