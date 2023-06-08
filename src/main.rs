@@ -342,11 +342,45 @@ impl Display for FullyQualifiedDomainName {
 }
 
 #[derive(Debug, Clone)]
+struct StartOfAuthorityRecordData {
+    primary_name_server: FullyQualifiedDomainName,
+    responsible_mailbox: FullyQualifiedDomainName,
+    serial_number: usize,
+    refresh_interval: usize,
+    retry_interval: usize,
+    expire_limit: usize,
+    minimum_ttl: usize,
+}
+
+impl StartOfAuthorityRecordData {
+    fn new(
+        primary_name_server: FullyQualifiedDomainName,
+        responsible_mailbox: FullyQualifiedDomainName,
+        serial_number: usize,
+        refresh_interval: usize,
+        retry_interval: usize,
+        expire_limit: usize,
+        minimum_ttl: usize,
+    ) -> Self {
+        Self {
+            primary_name_server,
+            responsible_mailbox,
+            serial_number,
+            refresh_interval,
+            retry_interval,
+            expire_limit,
+            minimum_ttl,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 enum DnsRecordData {
     A(Ipv4Addr),
     AAAA(Ipv6Addr),
     NameServer(FullyQualifiedDomainName),
     CanonicalName(FullyQualifiedDomainName),
+    StartOfAuthority(StartOfAuthorityRecordData),
 }
 
 #[derive(Debug, Clone)]
@@ -555,6 +589,18 @@ impl<'a> DnsQueryParser<'a> {
             }
             DnsRecordType::CanonicalName => {
                 DnsRecordData::CanonicalName(FullyQualifiedDomainName(self.parse_name()))
+            DnsRecordType::StartOfAuthority => {
+                Some(DnsRecordData::StartOfAuthority(
+                    StartOfAuthorityRecordData::new(
+                        FullyQualifiedDomainName(self.parse_name()),
+                        FullyQualifiedDomainName(self.parse_name()),
+                        self.parse_u32(),
+                        self.parse_u32(),
+                        self.parse_u32(),
+                        self.parse_u32(),
+                        self.parse_u32(),
+                    )
+                ))
             }
             _ => todo!("{record_type:?}"),
         };
@@ -667,13 +713,6 @@ impl DnsPacketWriter {
             // Record class
             writer.write_u16(record.record_class as u16);
 
-            // Questions always stop here
-            /*
-            if *record_type == DnsPacketRecordType::QuestionRecord {
-                continue;
-            }
-
-             */
             if let Some(ttl) = record.record_ttl {
                 // TTL
                 writer.write_u32(ttl.0 as _);
