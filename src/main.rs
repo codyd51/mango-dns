@@ -1146,9 +1146,18 @@ fn main() -> std::io::Result<()> {
 
     let resolver = DnsResolver::new();
     /*
-    let data = resolver.resolve_question(&DnsRecord::new_question(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
-    resolver.resolve_question(&DnsRecord::new_question(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
+    let data = resolver.resolve_question(
+        &DnsRecord::new_question(
+            &"nydc1.outbrain.org",
+            DnsRecordType::AAAA,
+            DnsRecordClass::Internet
+        )
+    );
+    println!("Data {data:?}");
+    //let data = resolver.resolve_question(&DnsRecord::new_question(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
+    //resolver.resolve_question(&DnsRecord::new_question(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
     return Ok(());
+
      */
 
     // Ensure the packet header is defined correctly
@@ -1162,19 +1171,23 @@ fn main() -> std::io::Result<()> {
         let (src, header, mut body_parser) = read_packet_to_buffer(&socket, &mut packet_buffer);
         match header.opcode {
             DnsOpcode::Query => {
-                // Ignore
-                println!("Handling DNS query");
+                println!("Handling DNS query ID {}", header.identifier);
                 // TODO(PT): Rename this to DnsBody/parse_body?
                 let body = body_parser.parse_response(&header);
                 for (i, question) in body.question_records.iter().enumerate() {
                     // Ignore questions about anything other than A/AAAA records
                     if ![DnsRecordType::A, DnsRecordType::AAAA].contains(&question.record_type) {
-                        println!("Dropping query for unsupported record type {:?}", question.record_type);
+                        println!("\tDropping query for unsupported record type {:?}", question.record_type);
                         continue;
                     }
 
-                    println!("\tResolving question #{i}: {question:?}");
+                    println!("\tResolving question #{i}: {question}");
                     let response = resolver.resolve_question(question);
+                    if response.is_none() {
+                        println!("\tFailed to find a record! Skipping...");
+                        continue;
+                    }
+                    let response = response.unwrap();
                     let response_record = DnsRecord::new(
                         &question.name.clone(),
                         DnsRecordType::A,
