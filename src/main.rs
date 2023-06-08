@@ -591,6 +591,37 @@ impl<'a> DnsQueryParser<'a> {
             record_data
         )
     }
+
+    fn parse_response(&mut self, header: &DnsPacketHeader) -> DnsResponse {
+        // First, parse the questions
+        let mut question_records = vec![];
+        for _ in 0..header.question_count {
+            let question = self.parse_question();
+            question_records.push(question);
+        }
+
+        let mut answer_records = vec![];
+        for _ in 0..header.answer_count {
+            let answer_record = self.parse_record();
+            answer_records.push(answer_record);
+        }
+
+        // Parse the authoritative records
+        let mut authority_records = vec![];
+        for _ in 0..header.authority_count {
+            let authority_record = self.parse_record();
+            authority_records.push(authority_record);
+        }
+
+        // Parse additional records
+        let mut additional_records = vec![];
+        for _ in 0..header.additional_record_count {
+            let additional_record = self.parse_record();
+            additional_records.push(additional_record);
+        }
+
+        DnsResponse::new(question_records, answer_records, authority_records, additional_records)
+    }
 }
 
 struct DnsPacketWriter {
