@@ -693,6 +693,50 @@ impl DnsQueryWriter {
         self.write_u32(addr);
     }
 }
+
+fn read_packet_to_buffer<'a>(socket: &UdpSocket, buffer: &'a mut [u8]) -> (SocketAddr, DnsPacketHeader, DnsQueryParser<'a>) {
+    let (packet_size, src) = socket.recv_from(buffer).unwrap();
+    let packet_data = &buffer[..packet_size];
+
+    let (header_data, body_data) = packet_data.split_at(DnsPacketHeaderRaw::HEADER_SIZE);
+    let header_raw = unsafe {
+        &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
+    };
+    let header = DnsPacketHeader::from(header_raw);
+    let body_parser = DnsQueryParser::new(body_data);
+    (src, header, body_parser)
+}
+
+fn send_query(socket: &UdpSocket, query: &[u8]) {
+    socket.send(&query).unwrap();
+    // Await a response
+    let mut response_buffer = [0; 1500];
+    loop {
+        let (src, header, mut body) = read_packet_to_buffer(socket, &mut response_buffer);
+
+        println!("Got response from Root DNS:");
+        println!("{header}");
+
+        // First, parse the questions
+        for i in 0..header.question_count {
+            let question = body.parse_question();
+            println!("\tQuestion #{i}: {question:?}");
+        }
+
+        if header.answer_count > 0 { todo!(); }
+
+        // Parse the authoritative records
+        for i in 0..header.authority_count {
+            let authority_record = body.parse_record();
+            println!("\tAuthority record #{i}: {authority_record:?}");
+        }
+
+        // Parse additional records
+        for i in 0..header.additional_record_count {
+            let additional_record = body.parse_record();
+            println!("\tAdditional record #{i}: {additional_record:?}");
+        }
+        break;
     }
 }
 
@@ -703,10 +747,10 @@ fn main() -> std::io::Result<()> {
     root_dns_server_socket.connect(remote_addr).unwrap();
     println!("Connection to root DNS server: {root_dns_server_socket:?}");
 
-    let mut writer = DnsQueryWriter::new_answer(0x669f, 300);
-    writer.write();
-    println!("{:02X?}", writer.output_packet);
-    //return Ok(());
+    let question = DnsQueryWriter::new_question(0x0001, "www.axleos.com");
+    send_query(&root_dns_server_socket, &question);
+
+    return Ok(());
 
     // Ensure the packet header is defined correctly
     let dns_packet_header_size = mem::size_of::<DnsPacketHeaderRaw>();
@@ -800,6 +844,27 @@ fn main() -> std::io::Result<()> {
                         socket.send_to(&writer.output_packet, &src).unwrap();
                     }
                     */
+                    if name.ends_with(".com") {
+                        println!("Forwarding request to Cloudflare DNS");
+                        let forwarded_request = DnsQueryWriter::new_question((header.identifier as u16) + 1, &name);
+                        println!("Forwarded request: {forwarded_request:?}");
+                        root_dns_server_socket.send(&forwarded_request).unwrap();
+                        // Await a response
+                        let mut response_buffer = [0; 1500];
+                        loop {
+                            let (packet_size, src) = root_dns_server_socket.recv_from(&mut response_buffer)?;
+                            let packet_data = &packet_buffer[..packet_size];
+                            let header_data = &packet_data[..dns_packet_header_size];
+                            let header_raw = unsafe {
+                                &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
+                            };
+                            let header = DnsPacketHeader::from(header_raw);
+                            println!("Got response from Cloudflare: {header}");
+                            let body = &packet_data[dns_packet_header_size..];
+                            let mut body_parser = DnsQueryParser::new(body);
+                            break;
+                        }
+                    }
                 }
                 /*
                 if header.answer_count > 0 || header.authority_count > 0 || header.additional_record_count > 0 {
