@@ -605,6 +605,18 @@ impl<'a> DnsQueryParser<'a> {
     fn parse_record(&mut self) -> DnsRecord {
         let name = self.parse_name();
         let record_type = self.parse_record_type();
+
+        if record_type == DnsRecordType::EDNSOpt {
+            return DnsRecord::new(
+                &name,
+                record_type,
+                // TODO(PT): Not valid for EDNSOpt, but I'm not bothering to properly model this for now
+                DnsRecordClass::Internet,
+                None,
+                None,
+            );
+        }
+
         let record_class = self.parse_record_class();
         let ttl = self.parse_ttl();
         let data_length = self.parse_u16();
