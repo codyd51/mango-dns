@@ -998,141 +998,56 @@ impl DnsResolver {
 }
 
 fn main() -> std::io::Result<()> {
-    let resolver = DnsResolver::new();
-    resolver.resolve_question(&DnsQuestionRecord::new(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
-    return Ok(());
-    let root_dns_server_socket = UdpSocket::bind("0.0.0.0:53").unwrap();
-    // TODO(PT): Pick a random root server
     /*
-    let remote_addr: SocketAddr = format!("{}:53", ROOT_DNS_SERVERS[0]).parse().unwrap();
-    root_dns_server_socket.connect(remote_addr).unwrap();
-    println!("Connection to root DNS server: {root_dns_server_socket:?}");
-
-    let question = DnsPacketWriter::new_question(0x0001, "www.axleos.com");
-    send_query(&root_dns_server_socket, &question);
-
+    let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+    let dest: SocketAddr = "[2001:4860:4802:34::a]:5353".parse().unwrap();
+    println!("Connecting to: {dest:?}");
+    socket.connect(dest).unwrap();
     return Ok(());
      */
+
+    let resolver = DnsResolver::new();
+    /*
+    let data = resolver.resolve_question(&DnsQuestionRecord::new(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
+    resolver.resolve_question(&DnsQuestionRecord::new(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
+    return Ok(());
+    */
 
     // Ensure the packet header is defined correctly
     let dns_packet_header_size = mem::size_of::<DnsPacketHeaderRaw>();
     assert_eq!(dns_packet_header_size, 12);
 
-    let test_packets = [
-        vec![146, 156, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 100, 98, 7, 95, 100, 110, 115, 45, 115, 100, 4, 95, 117, 100, 112, 5, 99, 97, 98, 108, 101, 7, 118, 105, 114, 103, 105, 110, 109, 3, 110, 101, 116, 0, 0, 12, 0, 1],
-        vec![20, 88, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 3, 119, 119, 119, 5, 97, 112, 112, 108, 101, 3, 99, 111, 109, 0, 0, 28, 0, 1],
-        vec![69, 18, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 6, 115, 101, 110, 116, 114, 121, 2, 105, 111, 0, 0, 28, 0, 1],
-        vec![75, 185, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 3, 119, 119, 119, 7, 115, 112, 111, 116, 105, 102, 121, 3, 99, 111, 109, 0, 0, 28, 0, 1],
-        vec![17, 197, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 11, 97, 110, 110, 111, 116, 97, 116, 105, 111, 110, 115, 6, 107, 97, 112, 101, 108, 105, 3, 99, 111, 109, 0, 0, 28, 0, 1],
-    ];
-
     let socket = UdpSocket::bind("127.0.0.1:53")?;
 
-    // Receives a single datagram message on the socket. If `buf` is too small to hold
-    // the message, it will be cut off.
-    // Set the buffer size to the MTU so we won't truncate packets
-    let mut packet_buffer = [0; 1500];
-    let mut i = 0;
     loop {
-        /*
-        let test_packet = &test_packets[i];
-        i += 1;
-        if i >= test_packets.len() {
-            break;
-        }
-        let packet_size = test_packet.len();
-        packet_buffer[..test_packet.len()].copy_from_slice(test_packet);
-         */
-        let (packet_size, src) = socket.recv_from(&mut packet_buffer)?;
-
-        /*
-        let mut writer = DnsPacketWriter::new_answer(0x669f, 300);
-        writer.write();
-        println!("{:02X?}", writer.output_packet);
-        socket.send_to(&writer.output_packet, &src).unwrap();
-        return Ok(());
-        */
-
-        let packet_data = &packet_buffer[..packet_size];
-        //println!("packet data {packet_data:?}");
-
-        let header_data = &packet_data[..dns_packet_header_size];
-        let header_raw = unsafe {
-            &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
-        };
-        let header = DnsPacketHeader::from(header_raw);
-        println!("{header}");
-        /*
-        println!("header bytes: {header_data:?}");
-        for b in header_data.iter() {
-            print!("{b:#02x}, ");
-        }
-        println!();
-        */
-
-        let body = &packet_data[dns_packet_header_size..];
-        //println!("packet body {body:?} opcode {:?}", header.opcode);
-        let mut body_parser = DnsQueryParser::new(body);
+        let mut packet_buffer = [0; 1500];
+        let (src, header, mut body_parser) = read_packet_to_buffer(&socket, &mut packet_buffer);
         match header.opcode {
             DnsOpcode::Query => {
+                // Ignore
                 println!("Handling DNS query");
-                for i in 0..header.question_count {
-                    println!("Handling question #{i}");
-                    /*
-                    let name = parse_name(body, &mut cursor);
-                    println!("Got name: {name}");
-                    let question_type = parse_u16(body, &mut cursor);
-                    let question_class = parse_u16(body, &mut cursor);
-                    println!("Question type {question_type} class {question_class}");
-                    */
-                    let name = body_parser.parse_name();
-                    println!("\tQuestion #{i}");
-                    println!("\t\t{name}");
-                    let question_type = body_parser.parse_record_type();
-                    let question_class = body_parser.parse_record_class();
-                    println!("\t\t{question_type:?}");
-                    println!("\t\t{question_class:?}");
-
-                    /*
-                    if name == "axleos.com" {
-                        println!("Handling query for axleos.com");
-
-                        let mut writer = DnsPacketWriter::new_question(header.identifier as u16);
-                        writer.write();
-
-                        let mut writer = DnsPacketWriter::new_answer(header.identifier as u16, &name, 300);
-                        writer.write();
-                        println!("Sending response packet data: {:02X?}", writer.output_packet);
-                        socket.send_to(&writer.output_packet, &src).unwrap();
+                // TODO(PT): Rename this to DnsBody/parse_body?
+                let body = body_parser.parse_response(&header);
+                for (i, question) in body.question_records.iter().enumerate() {
+                    // Ignore questions about anything other than A/AAAA records
+                    if ![DnsRecordType::A, DnsRecordType::AAAA].contains(&question.query_type) {
+                        println!("Dropping query for unsupported record type {:?}", question.query_type);
+                        continue;
                     }
-                    */
-                    if name.ends_with(".com") {
-                        println!("Forwarding request to Cloudflare DNS");
-                        let forwarded_request = DnsPacketWriter::new_question((header.identifier as u16) + 1, &name);
-                        println!("Forwarded request: {forwarded_request:?}");
-                        root_dns_server_socket.send(&forwarded_request).unwrap();
-                        // Await a response
-                        let mut response_buffer = [0; 1500];
-                        loop {
-                            let (packet_size, src) = root_dns_server_socket.recv_from(&mut response_buffer)?;
-                            let packet_data = &packet_buffer[..packet_size];
-                            let header_data = &packet_data[..dns_packet_header_size];
-                            let header_raw = unsafe {
-                                &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
-                            };
-                            let header = DnsPacketHeader::from(header_raw);
-                            println!("Got response from Cloudflare: {header}");
-                            let body = &packet_data[dns_packet_header_size..];
-                            let mut body_parser = DnsQueryParser::new(body);
-                            break;
-                        }
-                    }
+
+                    println!("\tResolving question #{i}: {question:?}");
+                    let response = resolver.resolve_question(question);
+                    let response_record = DnsRecord::new(
+                        &question.name.clone(),
+                        DnsRecordType::A,
+                        DnsRecordClass::Internet,
+                        DnsRecordTtl(300),
+                        response,
+                    );
+                    let mut response_packet = DnsPacketWriter::new_packet_from_record(header.identifier as _, &response_record);
+                    println!("Responding to DNS query! Answer = {response_record:?}");
+                    socket.send_to(&response_packet, &src).unwrap();
                 }
-                /*
-                if header.answer_count > 0 || header.authority_count > 0 || header.additional_record_count > 0 {
-                    todo!()
-                }
-                */
             }
             _ => {
                 //todo!()
