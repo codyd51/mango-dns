@@ -1220,9 +1220,12 @@ fn main() -> std::io::Result<()> {
                     );
                     let mut response_packet = DnsPacketWriter::new_packet_from_records(
                         params,
-                        vec![(DnsPacketRecordType::AnswerRecord, &response_record)]
+                        vec![
+                            (DnsPacketRecordType::QuestionRecord, question),
+                            (DnsPacketRecordType::AnswerRecord, &response_record)
+                        ]
                     );
-                    println!("Responding to DNS query! Answer = {response_record:?}");
+                    println!("\tQuestion{question} => Answer {response_record}");
                     socket.send_to(&response_packet, &src).unwrap();
                 }
             }
