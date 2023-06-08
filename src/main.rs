@@ -430,6 +430,19 @@ impl<'a> DnsQueryParser<'a> {
         }
     }
 
+    fn parse_u8_at(&self, cursor: &mut usize) -> usize {
+        let val = self.body[*cursor];
+        *cursor += 1;
+        val as _
+    }
+
+    fn parse_u8(&mut self) -> usize {
+        let mut cursor = self.cursor;
+        let out = self.parse_u8_at(&mut cursor);
+        self.cursor = cursor;
+        out
+    }
+
     fn parse_u16(&mut self) -> usize {
         let u16_size = mem::size_of::<u16>();
         let val = self.body[self.cursor..self.cursor + u16_size].view_bits::<Msb0>().load_be::<u16>();
@@ -437,20 +450,39 @@ impl<'a> DnsQueryParser<'a> {
         val as _
     }
 
-    fn parse_label_len(&mut self) -> usize {
-        let label_len = self.body[self.cursor];
-        self.cursor += 1;
-        label_len as _
+    fn parse_u32(&mut self) -> usize {
+        let u32_size = mem::size_of::<u32>();
+        let val = self.body[self.cursor..self.cursor + u32_size].view_bits::<Msb0>().load_be::<u32>();
+        self.cursor += u32_size;
+        val as _
     }
 
-    fn parse_label(&mut self, len: usize) -> Vec<u8> {
+    fn parse_label_len_at(&self, cursor: &mut usize) -> usize {
+        self.parse_u8_at(cursor)
+    }
+
+    fn parse_label_len(&mut self) -> usize {
+        let mut cursor = self.cursor;
+        let out = self.parse_label_len_at(&mut cursor);
+        self.cursor = cursor;
+        out
+    }
+
+    fn parse_label_at(&mut self, len: usize, cursor: &mut usize) -> Vec<u8> {
         let mut out = vec![0; len];
-        out.copy_from_slice(&self.body[self.cursor..self.cursor + len]);
-        self.cursor += len;
+        out.copy_from_slice(&self.body[*cursor..*cursor + len]);
+        *cursor += len;
         out
     }
 
     fn parse_name(&mut self) -> String {
+    fn parse_label(&mut self, len: usize) -> Vec<u8> {
+        let mut cursor = self.cursor;
+        let out = self.parse_label_at(len, &mut cursor);
+        self.cursor = cursor;
+        out
+    }
+
         //println!("parsing name at {}...", self.cursor);
         // The DNS body compression scheme allows a name to be represented as:
         // - A pointer
@@ -741,22 +773,24 @@ fn main() -> std::io::Result<()> {
                     let name = body_parser.parse_name();
                     println!("\tQuestion #{i}");
                     println!("\t\t{name}");
-                    let question_type = body_parser.parse_query_type();
-                    let question_class = body_parser.parse_query_class();
+                    let question_type = body_parser.parse_record_type();
+                    let question_class = body_parser.parse_record_class();
                     println!("\t\t{question_type:?}");
                     println!("\t\t{question_class:?}");
 
+                    /*
                     if name == "axleos.com" {
                         println!("Handling query for axleos.com");
 
                         let mut writer = DnsQueryWriter::new_question(header.identifier as u16);
                         writer.write();
 
-                        let mut writer = DnsQueryWriter::new_answer(header.identifier as u16, 300);
+                        let mut writer = DnsQueryWriter::new_answer(header.identifier as u16, &name, 300);
                         writer.write();
                         println!("Sending response packet data: {:02X?}", writer.output_packet);
                         socket.send_to(&writer.output_packet, &src).unwrap();
                     }
+                    */
                 }
                 /*
                 if header.answer_count > 0 || header.authority_count > 0 || header.additional_record_count > 0 {
