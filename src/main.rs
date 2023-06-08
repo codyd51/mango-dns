@@ -423,6 +423,37 @@ impl DnsRecord {
             record_data: None,
         }
     }
+
+impl Display for DnsRecord {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let record_type = match self.record_type {
+            DnsRecordType::A => "A",
+            DnsRecordType::AAAA => "AAAA",
+            DnsRecordType::Pointer => "PTR",
+            DnsRecordType::SVCB => "SVCB",
+            DnsRecordType::StartOfAuthority => "SOA",
+            DnsRecordType::Https => "HTTPS",
+            DnsRecordType::NameServer => "NS",
+            DnsRecordType::CanonicalName => "CNAME",
+            DnsRecordType::DelegationSigner => "DS",
+            DnsRecordType::EDNSOpt => "OPT",
+        };
+        let record_data = match &self.record_data {
+            None => "None".to_string(),
+            Some(record_data) => match record_data {
+                DnsRecordData::A(ipv4_addr) => format!("{ipv4_addr}"),
+                DnsRecordData::AAAA(ipv6_addr) => format!("{ipv6_addr}"),
+                DnsRecordData::NameServer(fqdn) => format!("{fqdn}"),
+                DnsRecordData::CanonicalName(fqdn) => format!("{fqdn}"),
+                DnsRecordData::StartOfAuthority(soa) => format!("{soa:?}"),
+            }
+        };
+        write!(
+            f,
+            "DnsRecord[name={}, {record_type}, {record_data}]",
+            self.name,
+        )
+    }
 }
 
 struct DnsQueryParser<'a> {
@@ -817,19 +848,19 @@ impl DnsResponse {
 impl Display for DnsResponse {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for (i, question) in self.question_records.iter().enumerate() {
-            writeln!(f, "\tQuestion #{i}: {question:?}")?;
+            writeln!(f, "\tQuestion #{i}: {question}")?;
         }
 
         for (i, answer) in self.answer_records.iter().enumerate() {
-            writeln!(f, "\tAnswer #{i}: {answer:?}")?;
+            writeln!(f, "\tAnswer #{i}: {answer}")?;
         }
 
         for (i, authority_record) in self.authority_records.iter().enumerate() {
-            writeln!(f, "\tAuthority record #{i}: {authority_record:?}")?;
+            writeln!(f, "\tAuthority record #{i}: {authority_record}")?;
         }
 
         for (i, additional_record) in self.additional_records.iter().enumerate() {
-            writeln!(f, "\tAdditional record #{i}: {additional_record:?}")?;
+            writeln!(f, "\tAdditional record #{i}: {additional_record}")?;
         }
 
         Ok(())
@@ -941,7 +972,7 @@ impl DnsResolver {
 
         loop {
             let response = self.send_question_and_await_response(&server_addr, question);
-            println!("Response:\n{response}");
+            println!("\t\tResponse:\n{response}");
 
             // First, add the additional records to our cache, as we might need them to resolve the next destination
             for additional_record in response.additional_records.iter() {
@@ -952,7 +983,7 @@ impl DnsResolver {
 
             // Did we receive an answer?
             if !response.answer_records.is_empty() {
-                println!("Found answers!");
+                //println!("Found answers!");
                 // Add the answers to the cache
                 for answer_record in response.answer_records.iter() {
                     let mut cache = self.cache.borrow_mut();
@@ -973,7 +1004,7 @@ impl DnsResolver {
             // Pick the first authority that the server mentioned
             let authority_record = &response.authority_records[0];
 
-            println!("Found authority for {}: {:?}", authority_record.name, authority_record);
+            println!("\t\tFound authority for {}: {authority_record}", authority_record.name);
 
             match &authority_record.record_data.as_ref().unwrap() {
                 DnsRecordData::NameServer(authority_name) => {
