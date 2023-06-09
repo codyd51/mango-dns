@@ -53,24 +53,10 @@ impl<'a> DnsQueryParser<'a> {
         self.parse_u8_at(cursor)
     }
 
-    fn parse_label_len(&mut self) -> usize {
-        let mut cursor = self.cursor;
-        let out = self.parse_label_len_at(&mut cursor);
-        self.cursor = cursor;
-        out
-    }
-
     fn parse_label_at(&mut self, len: usize, cursor: &mut usize) -> Vec<u8> {
         let mut out = vec![0; len];
         out.copy_from_slice(&self.body[*cursor..*cursor + len]);
         *cursor += len;
-        out
-    }
-
-    fn parse_label(&mut self, len: usize) -> Vec<u8> {
-        let mut cursor = self.cursor;
-        let out = self.parse_label_at(len, &mut cursor);
-        self.cursor = cursor;
         out
     }
 

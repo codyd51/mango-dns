@@ -64,7 +64,7 @@ impl DnsPacketWriter {
         writer.output_packet.append(&mut header_bytes);
         writer.cursor += header_bytes_len;
 
-        for (record_type, record) in record_types_and_records.iter() {
+        for (_record_type, record) in record_types_and_records.iter() {
             // Record name
             writer.write_name(&record.name);
             // Record type

@@ -165,7 +165,7 @@ impl DnsResolver {
         fqdn: &FullyQualifiedDomainName,
         allowed_record_types: &[DnsRecordType],
     ) -> Option<DnsRecordData> {
-        let mut cache = self.cache.borrow_mut();
+        let cache = self.cache.borrow_mut();
         if let Some(cached_records) = cache.get(&fqdn) {
             // Pick the first cached record with a type we like
             debug!("Resolving {fqdn} from cache");

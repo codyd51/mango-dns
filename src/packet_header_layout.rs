@@ -37,7 +37,7 @@ impl DnsPacketHeaderRaw {
     }
 
     fn set_u16_at_u16_idx(&mut self, u16_idx: usize, val: u16) {
-        (self.0[u16s(u16_idx)..u16s(u16_idx + 1)].store(val.to_be()))
+        self.0[u16s(u16_idx)..u16s(u16_idx + 1)].store(val.to_be())
     }
 
     pub(crate) fn identifier(&self) -> usize {
@@ -81,7 +81,7 @@ impl DnsPacketHeaderRaw {
     }
 
     fn packed_flags(&self) -> BitArray<u16, Msb0> {
-        let mut flags = (self.get_u16_at_u16_idx(1) as u16);
+        let mut flags = self.get_u16_at_u16_idx(1) as u16;
         flags = flags.to_le();
         BitArray::from(flags)
     }
@@ -96,7 +96,7 @@ impl DnsPacketHeaderRaw {
     }
 
     pub(crate) fn set_packed_flag_at_flags_bit_idx(&mut self, packed_flags_bit_idx: usize, flag: bool) {
-        let mut flags = (self.get_u16_at_u16_idx(1) as u16);
+        let mut flags = self.get_u16_at_u16_idx(1) as u16;
         flags = flags.to_le();
         let v: &mut BitSlice<u16, Msb0> = BitSlice::from_element_mut(&mut flags);
         v.set(packed_flags_bit_idx, flag);

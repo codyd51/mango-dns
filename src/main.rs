@@ -38,7 +38,7 @@ fn send_one_packet(
             )
         )
     );
-    let mut response_packet = DnsPacketWriter::new_packet_from_records(
+    let response_packet = DnsPacketWriter::new_packet_from_records(
         params,
         vec![
             (DnsPacketRecordType::QuestionRecord, &question),
@@ -95,7 +95,7 @@ fn main() -> std::io::Result<()> {
                             )
                         )
                     );
-                    let mut response_packet = DnsPacketWriter::new_packet_from_records(
+                    let response_packet = DnsPacketWriter::new_packet_from_records(
                         params,
                         vec![
                             (DnsPacketRecordType::QuestionRecord, question),
