@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="logo.png" width="300">
+  <img src="logo.png" width="200">
   <h1>mango-dns</h1>
 </div>
 
