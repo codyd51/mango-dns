@@ -865,6 +865,8 @@ impl DnsPacketWriter {
     }
 
     fn write_ipv6_addr(&mut self, addr: Ipv6Addr) {
+        // IP address length
+        self.write_u16(16);
         self.write_buf(&addr.octets())
     }
 }
