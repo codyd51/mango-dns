@@ -7,6 +7,7 @@ use bitvec::prelude::*;
 use num_traits::PrimInt;
 use rand::{random, Rng};
 use rand::seq::SliceRandom;
+use log::{debug, error, info, trace, warn};
 
 #[derive(Debug, PartialEq, Eq)]
 enum DnsOpcode {
@@ -541,7 +542,7 @@ impl<'a> DnsQueryParser<'a> {
     }
 
     fn parse_name_at(&mut self, cursor: &mut usize) -> String {
-        //println!("parsing name at {}...", self.cursor);
+        debug!("Parsing name at {}...", self.cursor);
         // The DNS body compression scheme allows a name to be represented as:
         // - A pointer
         // - A sequence of labels ending in a pointer
@@ -564,7 +565,7 @@ impl<'a> DnsQueryParser<'a> {
                 let mut pointer_cursor = label_offset_into_body;
                 // Recurse and read a name from the pointer
                 let name_from_pointer = self.parse_name_at(&mut pointer_cursor);
-                //println!("Got name from pointer: {name_from_pointer}");
+                debug!("Got name from pointer: {name_from_pointer}");
                 name_components.push(name_from_pointer);
                 // Pointers are always the end of a name
                 break;
@@ -665,7 +666,7 @@ impl<'a> DnsQueryParser<'a> {
             }
             _ => {
                 // Skip past the bytes we're ignoring
-                //println!("Doing stub parsing of unhandled record type {record_type:?}");
+                debug!("Doing stub parsing of unhandled record type {record_type:?}");
                 for _ in 0..data_length {
                     self.parse_u8();
                 }
@@ -974,8 +975,8 @@ impl DnsResolver {
         let mut response_buffer = [0; 1500];
         let (_src, header, mut body) = read_packet_to_buffer(&socket, &mut response_buffer);
 
-        //println!("Got response from {socket:?}:");
-        //println!("{header}");
+        debug!("Got response from {socket:?}:");
+        debug!("{header}");
 
         // Ensure it was the response we were expecting
         // TODO(PT): We'll need some kind of event-driven model to handle interleaved responses
@@ -987,7 +988,7 @@ impl DnsResolver {
     }
 
     fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsRecord) -> DnsResponse {
-        //println!("Connecting to: {dest:?}");
+        debug!("Connecting to: {dest:?}");
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         socket.connect(dest).unwrap();
 
@@ -1039,7 +1040,7 @@ impl DnsResolver {
         let mut cache = self.cache.borrow_mut();
         if let Some(cached_records) = cache.get(&fqdn) {
             // Pick the first cached record with a type we like
-            //println!("Resolving {fqdn} from cache");
+            debug!("Resolving {fqdn} from cache");
 
             cached_records
                 .iter()
@@ -1065,7 +1066,7 @@ impl DnsResolver {
         // First, check whether the answer is in the cache
         let requested_fqdn = FullyQualifiedDomainName(question.name.clone());
         if let Some(cached_record) = self.get_record_from_cache_for_returning_response(&requested_fqdn, &question.record_type) {
-            //println!("Serving question from cache: {requested_fqdn}");
+            debug!("Serving question from cache: {requested_fqdn}");
             return Some(cached_record);
         }
 
@@ -1074,7 +1075,7 @@ impl DnsResolver {
 
         loop {
             let response = self.send_question_and_await_response(&server_addr, question);
-            println!("\t\tResponse:\n{response}");
+            debug!("\t\tResponse:\n{response}");
 
             // First, add the additional records to our cache, as we might need them to resolve the next destination
             for additional_record in response.additional_records.iter() {
@@ -1085,7 +1086,7 @@ impl DnsResolver {
 
             // Did we receive an answer?
             if !response.answer_records.is_empty() {
-                //println!("Found answers!");
+                debug!("Found answers!");
                 // Add the answers to the cache
                 for answer_record in response.answer_records.iter() {
                     let mut cache = self.cache.borrow_mut();
@@ -1107,19 +1108,19 @@ impl DnsResolver {
             // The server we just queried will tell us who the authority is for the next component of the domain name
             // Pick the first authority that the server mentioned
             if response.authority_records.len() == 0 {
-                println!("\t\tNo authority records returned, question: {question}, response: {response}");
+                debug!("\t\tNo authority records returned, question: {question}, response: {response}");
                 return None;
             }
             let authority_record = &response.authority_records[0];
 
-            println!("\t\tFound authority for {}: {authority_record}", authority_record.name);
+            info!("\t\tFound authority for \"{}\": {authority_record}", authority_record.name);
 
             match &authority_record.record_data.as_ref().unwrap() {
                 DnsRecordData::NameServer(authority_name) => {
                     // (This should hit the cache, since the nameserver's A record should have been provided by the root server's additional records)
-                    //println!("Getting from cache for recursive resolution: {authority_name}");
+                    debug!("\t\tAttempting to read authority info from cache for {authority_name}...");
                     let name_server_record_data = self.get_record_from_cache_for_recursive_resolution(&authority_name).unwrap_or_else(|| {
-                        println!("\t\tCouldn't find info for NS {authority_name} in cache, will resolve...");
+                        info!("\t\tCouldn't find info for NS {authority_name} in cache, will recurse...");
                         self.resolve_question(&DnsRecord::new_question_a(&authority_name.0)).unwrap()
                     });
 
@@ -1138,7 +1139,7 @@ impl DnsResolver {
                     // Don't do anything with SOA records for now
                     // TODO(PT): Does this always mean that the requested record didn't exist?
                     // TODO(PT): Return a response containing the SOA, which will serve as an NXDOMAIN to the client
-                    println!("\t\tFound an SOA record, assuming this means the requested record doesn't exist...");
+                    debug!("\t\tFound an SOA record, assuming this means the requested record doesn't exist...");
                     return None;
                 }
                 _ => todo!(),
@@ -1183,20 +1184,20 @@ fn main() -> std::io::Result<()> {
         let (src, header, mut body_parser) = read_packet_to_buffer(&socket, &mut packet_buffer);
         match header.opcode {
             DnsOpcode::Query => {
-                println!("Handling DNS query ID {}", header.identifier);
+                info!("Handling DNS query ID 0x{:x}", header.identifier);
                 // TODO(PT): Rename this to DnsBody/parse_body?
                 let body = body_parser.parse_response(&header);
                 for (i, question) in body.question_records.iter().enumerate() {
                     // Ignore questions about anything other than A/AAAA records
                     if ![DnsRecordType::A, DnsRecordType::AAAA].contains(&question.record_type) {
-                        println!("\tDropping query for unsupported record type {:?}", question.record_type);
+                        debug!("\tDropping query for unsupported record type {:?}", question.record_type);
                         continue;
                     }
 
-                    println!("\tResolving question #{i}: {question}");
+                    info!("\tResolving question #{i}: {question}");
                     let response = resolver.resolve_question(question);
                     if response.is_none() {
-                        println!("\tFailed to find a record! Skipping...");
+                        debug!("\tFailed to find a record! Skipping...");
                         continue;
                     }
                     let response = response.unwrap();
@@ -1225,15 +1226,15 @@ fn main() -> std::io::Result<()> {
                             (DnsPacketRecordType::AnswerRecord, &response_record)
                         ]
                     );
-                    println!("\tQuestion{question} => Answer {response_record}");
+                    info!("\tQuestion{question} => Answer {response_record}");
                     socket.send_to(&response_packet, &src).unwrap();
                 }
             }
             _ => {
+                debug!("Ignoring non-query packet");
                 //todo!()
             }
         }
-        //todo!();
     }
 
     Ok(())
