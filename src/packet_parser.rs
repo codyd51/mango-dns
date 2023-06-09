@@ -1,7 +1,7 @@
 use std::mem;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use bitvec::prelude::*;
-use log::debug;
+use log::{debug, trace};
 use crate::dns_record::{DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType, FullyQualifiedDomainName, StartOfAuthorityRecordData};
 use crate::packet_header::DnsPacketHeader;
 use crate::packet_header_layout::DnsPacketHeaderRaw;
@@ -61,7 +61,7 @@ impl<'a> DnsQueryParser<'a> {
     }
 
     fn parse_name_at(&mut self, cursor: &mut usize) -> String {
-        debug!("Parsing name at {}...", self.cursor);
+        trace!("Parsing name at {}...", self.cursor);
         // The DNS body compression scheme allows a name to be represented as:
         // - A pointer
         // - A sequence of labels ending in a pointer

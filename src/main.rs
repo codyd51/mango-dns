@@ -1,7 +1,7 @@
 use std::net::UdpSocket;
 use log::{debug, info};
-use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordTtl, DnsRecordType};
-use crate::packet_header::{PacketDirection, ResponseFields};
+use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType};
+use crate::packet_header::{DnsPacketHeader, PacketDirection, ResponseFields};
 use crate::packet_header_layout::DnsOpcode;
 use crate::packet_parser::read_packet_to_buffer;
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
@@ -49,6 +49,49 @@ fn send_one_packet(
     socket.send_to(&response_packet, &resp_addr).unwrap();
 }
 
+fn generate_response_packet_from_question_and_response_record(
+    question_header: &DnsPacketHeader,
+    question: &DnsRecord,
+    response_record_data: Option<DnsRecordData>,
+) -> Vec<u8> {
+    let params = DnsPacketWriterParams::new(
+        question_header.identifier as u16,
+        DnsOpcode::Query,
+        PacketDirection::Response(
+            ResponseFields::new(
+                true,
+                false,
+                0
+            )
+        )
+    );
+
+    if let Some(response_record_data) = response_record_data {
+        let response_record = DnsRecord::new(
+            &question.name.clone(),
+            response_record_data.clone().into(),
+            DnsRecordClass::Internet,
+            Some(DnsRecordTtl(300)),
+            Some(response_record_data),
+        );
+        info!("\tQuestion{question} => Answer {response_record}");
+        DnsPacketWriter::new_packet_from_records(
+            params,
+            vec![
+                (DnsPacketRecordType::QuestionRecord, question),
+                (DnsPacketRecordType::AnswerRecord, &response_record),
+            ]
+        )
+    }
+    else {
+        info!("\tQuestion{question} => NXDOMAIN");
+        DnsPacketWriter::new_packet_from_records(
+            params,
+            vec![(DnsPacketRecordType::QuestionRecord, question)]
+        )
+    }
+}
+
 fn main() -> std::io::Result<()> {
     env_logger::Builder::new().filter_level(log::LevelFilter::Info).init();
 
@@ -72,37 +115,13 @@ fn main() -> std::io::Result<()> {
 
                     info!("\tResolving question #{i}: {question}");
                     let response = resolver.resolve_question(question);
-                    if response.is_none() {
-                        debug!("\tFailed to find a record! Skipping...");
-                        continue;
-                    }
-                    let response = response.unwrap();
-                    let response_record = DnsRecord::new(
-                        &question.name.clone(),
-                        response.clone().into(),
-                        DnsRecordClass::Internet,
-                        Some(DnsRecordTtl(300)),
-                        Some(response),
+
+                    let response_packet = generate_response_packet_from_question_and_response_record(
+                        &header,
+                        question,
+                        response
                     );
-                    let params = DnsPacketWriterParams::new(
-                        header.identifier as u16,
-                        DnsOpcode::Query,
-                        PacketDirection::Response(
-                            ResponseFields::new(
-                                true,
-                                false,
-                                0
-                            )
-                        )
-                    );
-                    let response_packet = DnsPacketWriter::new_packet_from_records(
-                        params,
-                        vec![
-                            (DnsPacketRecordType::QuestionRecord, question),
-                            (DnsPacketRecordType::AnswerRecord, &response_record)
-                        ]
-                    );
-                    info!("\tQuestion{question} => Answer {response_record}");
+
                     socket.send_to(&response_packet, &src).unwrap();
                 }
             }
