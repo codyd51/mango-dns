@@ -1,5 +1,7 @@
-# mango-dns
-![mango-dns logo](logo.png)
+<div align="center">
+  <img src="logo.png" width="300">
+  <h1>mango-dns</h1>
+</div>
 
 `mango-dns` is a recursive DNS resolver.
 
