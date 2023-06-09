@@ -1150,35 +1150,61 @@ impl DnsResolver {
     }
 }
 
-fn main() -> std::io::Result<()> {
-    /*
-    let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-    let dest: SocketAddr = "[2001:4860:4802:34::a]:5353".parse().unwrap();
-    println!("Connecting to: {dest:?}");
-    socket.connect(dest).unwrap();
-    return Ok(());
-     */
+/// Useful for testing
+fn resolve_one_record(
+    resolver: &DnsResolver,
+    fqdn: &str,
+    record_type: DnsRecordType
+) -> (DnsRecord, DnsRecordData) {
+    let question = DnsRecord::new_question(
+        fqdn,
+        record_type,
+        DnsRecordClass::Internet
+    );
+    let data = resolver.resolve_question(&question).unwrap();
+    info!("Resolved \"{fqdn}\": {data:?}");
+    (question, data)
+}
 
-    let resolver = DnsResolver::new();
-    /*
-    let data = resolver.resolve_question(
-        &DnsRecord::new_question(
-            &"nydc1.outbrain.org",
-            DnsRecordType::AAAA,
-            DnsRecordClass::Internet
+/// Useful for testing
+fn send_one_packet(
+    resolver: &DnsResolver,
+    socket: &UdpSocket,
+) {
+    let (question, response_record_data) = resolve_one_record(&resolver, "axleos.com", DnsRecordType::AAAA);
+    let response_record = DnsRecord::new(
+        &question.name.clone(),
+        response_record_data.clone().into(),
+        DnsRecordClass::Internet,
+        Some(DnsRecordTtl(300)),
+        Some(response_record_data),
+    );
+    let params = DnsPacketWriterParams::new(
+        0x1234 as u16,
+        DnsOpcode::Query,
+        PacketDirection::Response(
+            ResponseFields::new(
+                true,
+                false,
+                0
+            )
         )
     );
-    println!("Data {data:?}");
-    //let data = resolver.resolve_question(&DnsRecord::new_question(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
-    //resolver.resolve_question(&DnsRecord::new_question(&"axleos.com", DnsRecordType::A, DnsRecordClass::Internet));
-    return Ok(());
+    let mut response_packet = DnsPacketWriter::new_packet_from_records(
+        params,
+        vec![
+            (DnsPacketRecordType::QuestionRecord, &question),
+            (DnsPacketRecordType::AnswerRecord, &response_record)
+        ]
+    );
+    let resp_addr = socket.local_addr().unwrap();
+    socket.send_to(&response_packet, &resp_addr).unwrap();
+}
 
-     */
+fn main() -> std::io::Result<()> {
+    env_logger::Builder::new().filter_level(log::LevelFilter::Info).init();
 
-    // Ensure the packet header is defined correctly
-    let dns_packet_header_size = mem::size_of::<DnsPacketHeaderRaw>();
-    assert_eq!(dns_packet_header_size, 12);
-
+    let resolver = DnsResolver::new();
     let socket = UdpSocket::bind("127.0.0.1:53")?;
 
     loop {
