@@ -313,7 +313,8 @@ mod test {
         assert_eq!(header.direction, PacketDirection::Query);
         assert_eq!(header.opcode, DnsOpcode::Query);
         assert_eq!(header.is_truncated, false);
-        assert_eq!(header.is_recursion_desired, true);
+        assert_eq!(header.is_recursion_desired, false);
+        assert_eq!(header.is_recursion_available, true);
         assert_eq!(header.question_count, 1);
         assert_eq!(header.answer_count, 0);
         assert_eq!(header.authority_count, 0);

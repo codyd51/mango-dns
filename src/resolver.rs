@@ -92,7 +92,7 @@ impl DnsResolver {
             vec![(DnsPacketRecordType::QuestionRecord, question)]
         );
         debug!("Sending to {socket:?}...");
-        socket.send(&packet).expect("Failed to send question to {dest}");
+        socket.send(&packet).unwrap_or_else(|_| panic!("Failed to send question to {dest}"));
         debug!("Sent!");
 
         for attempt in 0..3 {

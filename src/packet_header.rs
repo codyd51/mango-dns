@@ -1,18 +1,18 @@
 use std::fmt::{Display, Formatter};
-use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw};
+use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw, DnsPacketResponseCode};
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) struct ResponseFields {
     is_authority: bool,
     is_recursion_available: bool,
-    response_code: usize,
+    pub(crate) response_code: DnsPacketResponseCode,
 }
 
 impl ResponseFields {
     pub(crate) fn new(
         is_authority: bool,
         is_recursion_available: bool,
-        response_code: usize,
+        response_code: DnsPacketResponseCode,
     ) -> Self {
         Self {
             is_authority,
@@ -22,7 +22,7 @@ impl ResponseFields {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum PacketDirection {
     Query,
     Response(ResponseFields),
@@ -35,6 +35,7 @@ pub(crate) struct DnsPacketHeader {
     pub(crate) opcode: DnsOpcode,
     pub(crate) is_truncated: bool,
     pub(crate) is_recursion_desired: bool,
+    pub(crate) is_recursion_available: bool,
     pub(crate) question_count: usize,
     pub(crate) answer_count: usize,
     pub(crate) authority_count: usize,
@@ -49,13 +50,14 @@ impl From<&DnsPacketHeaderRaw> for DnsPacketHeader {
                 true => PacketDirection::Response(ResponseFields::new(
                     raw.is_authoritative_answer(),
                     raw.is_recursion_available(),
-                    raw.response_code(),
+                    raw.response_code().try_into().unwrap(),
                 )),
                 false => PacketDirection::Query,
             },
             opcode: DnsOpcode::try_from(raw.opcode()).unwrap_or_else(|op| panic!("Unexpected DNS opcode: {}", op)),
             is_truncated: raw.is_truncated(),
             is_recursion_desired: raw.is_recursion_desired(),
+            is_recursion_available: raw.is_recursion_available(),
             question_count: raw.question_record_count(),
             answer_count: raw.answer_record_count(),
             authority_count: raw.authority_record_count(),
