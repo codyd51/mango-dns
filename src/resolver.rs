@@ -226,42 +226,58 @@ impl DnsResolver {
                 debug!("\t\tNo authority records returned, question: {question}, response: {response}");
                 return None;
             }
-            let authority_record = &response.authority_records[0];
 
-            info!("\t\tFound authority for \"{}\": {authority_record}", authority_record.name);
-
-            match &authority_record.record_data.as_ref().unwrap() {
-                DnsRecordData::NameServer(authority_name) => {
-                    // (This should hit the cache, since the nameserver's A record should have been provided by the root server's additional records)
-                    debug!("\t\tAttempting to read authority info from cache for {authority_name}...");
-                    let name_server_record_data = self.get_record_from_cache_for_recursive_resolution(&authority_name).unwrap_or_else(|| {
-                        info!("\t\tCouldn't find info for NS {authority_name} in cache, will recurse...");
-                        // TODO(PT): Handle when this fails!
-                        // DnsRecord[name=partners.wg.spotify.com, A, None]
-                        self.resolve_question(&DnsRecord::new_question_a(&authority_name.0)).unwrap()
-                    });
-
-                    match name_server_record_data {
-                        DnsRecordData::A(ipv4_addr) => {
-                            server_addr = Self::dns_socket_for_ipv4(ipv4_addr);
+            let authority_nameservers: Vec<FullyQualifiedDomainName> = response
+                .authority_records
+                .iter()
+                .filter_map(|authority_record|{
+                    match authority_record.record_data.as_ref() {
+                        Some(record_data) => {
+                            match record_data {
+                                DnsRecordData::NameServer(authority_name) => Some(authority_name.clone()),
+                                _ => None,
+                            }
                         }
-                        DnsRecordData::AAAA(ipv6_addr) => {
-                            server_addr = Self::dns_socket_for_ipv6(ipv6_addr);
-                        }
-                        _ => todo!(),
+                        None => None,
                     }
-                }
-                DnsRecordData::StartOfAuthority(_) => {
-                    // For now, treat any SOA record as meaning that the requested record doesn't exist
-                    // Don't do anything with SOA records for now
-                    // TODO(PT): Does this always mean that the requested record didn't exist?
-                    // TODO(PT): Return a response containing the SOA, which will serve as an NXDOMAIN to the client
-                    debug!("\t\tFound an SOA record, assuming this means the requested record doesn't exist...");
+                }).collect();
+            match self.select_and_resolve_nameserver_from_pool(authority_nameservers) {
+                Some(ns_record_data) => match ns_record_data {
+                    DnsRecordData::A(ipv4_addr) => {
+                        server_addr = Self::dns_socket_for_ipv4(ipv4_addr);
+                    },
+                    _ => panic!("We can only resolve nameservers via A records for now"),
+                },
+                None => {
+                    // Failed to resolve a nameserver for the provided query
+                    info!("Failed to find a nameserver to resolve question {question}");
                     return None;
                 }
-                _ => todo!(),
-            };
+            }
         }
+    }
+
+    fn select_and_resolve_nameserver_from_pool(
+        &self,
+        nameservers: Vec<FullyQualifiedDomainName>,
+    ) -> Option<DnsRecordData> {
+        // First, check whether any NS is already in the cache
+        for nameserver in nameservers.iter() {
+            debug!("\t\tAttempting to read info from cache for nameserver {nameserver}...");
+            if let Some(name_server_record_data) = self.get_record_from_cache_for_recursive_resolution(&nameserver) {
+                info!("\t\tResolved NS {nameserver} from cache: {name_server_record_data:?}");
+                return Some(name_server_record_data.clone());
+            }
+        }
+        // Next, try to resolve any NS by reaching out
+        for nameserver in nameservers.iter() {
+            info!("\t\tRecursively resolving NS {nameserver}...");
+            if let Some(name_server_record_data) = self.resolve_question(&DnsRecord::new_question_a(&nameserver.0)) {
+                return Some(name_server_record_data.clone());
+            }
+        }
+        // Failed to resolve any nameserver
+        None
     }
 }
 
