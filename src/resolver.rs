@@ -265,13 +265,13 @@ pub(crate) fn resolve_one_record(
     resolver: &DnsResolver,
     fqdn: &str,
     record_type: DnsRecordType
-) -> (DnsRecord, DnsRecordData) {
+) -> (DnsRecord, Option<DnsRecordData>) {
     let question = DnsRecord::new_question(
         fqdn,
         record_type,
         DnsRecordClass::Internet
     );
-    let data = resolver.resolve_question(&question).unwrap();
+    let data = resolver.resolve_question(&question);
     info!("Resolved \"{fqdn}\": {data:?}");
     (question, data)
 }

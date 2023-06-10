@@ -22,6 +22,23 @@ impl DnsPacketWriterParams {
             direction,
         }
     }
+
+    pub(crate) fn new_query_response(
+        transaction_id: usize,
+        response_code: DnsPacketResponseCode,
+    ) -> Self {
+        Self::new(
+            transaction_id as _,
+            DnsOpcode::Query,
+            PacketDirection::Response(
+                ResponseFields::new(
+                    true,
+                    true,
+                    response_code as _,
+                )
+            )
+        )
+    }
 }
 
 pub(crate) struct DnsPacketWriter {
@@ -30,6 +47,34 @@ pub(crate) struct DnsPacketWriter {
 }
 
 impl DnsPacketWriter {
+    pub(crate) fn new_raw_header(
+        params: &DnsPacketWriterParams,
+        question_record_count: u16,
+        answer_record_count: u16,
+        authority_record_count: u16,
+        additional_record_count: u16,
+    ) -> DnsPacketHeaderRaw {
+        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
+        header.set_identifier(params.transaction_id);
+        header.set_is_response(matches!(params.direction, PacketDirection::Response(_)));
+        header.set_opcode(params.opcode as _);
+        let response_code = match params.direction {
+            PacketDirection::Query => {
+                // Not relevant for queries
+                DnsPacketResponseCode::Success
+            },
+            PacketDirection::Response(fields) => fields.response_code
+        };
+        header.set_response_code(response_code as _);
+
+        header.set_question_record_count(question_record_count);
+        header.set_answer_record_count(answer_record_count);
+        header.set_authority_record_count(authority_record_count);
+        header.set_additional_record_count(additional_record_count);
+
+        header
+    }
+
     pub(crate) fn new_packet_from_records(params: DnsPacketWriterParams, record_types_and_records: Vec<(DnsPacketRecordType, &DnsRecord)>) -> Vec<u8> {
         let mut question_record_count = 0;
         let mut answer_record_count = 0;
@@ -44,16 +89,13 @@ impl DnsPacketWriter {
             };
         }
 
-        let mut header = DnsPacketHeaderRaw(BitArray::new([0; 6]));
-        header.set_identifier(params.transaction_id);
-        header.set_is_response(matches!(params.direction, PacketDirection::Response(_)));
-        header.set_opcode(params.opcode as _);
-
-        header.set_question_record_count(question_record_count);
-        header.set_answer_record_count(answer_record_count);
-        header.set_authority_record_count(authority_record_count);
-        header.set_additional_record_count(additional_record_count);
-
+        let header = Self::new_raw_header(
+            &params,
+            question_record_count,
+            answer_record_count,
+            authority_record_count,
+            additional_record_count,
+        );
         let mut header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
         let header_bytes_len = header_bytes.len();
 
