@@ -1,8 +1,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::{io, thread};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
-use log::{debug, info};
+use std::time::Duration;
+use log::{debug, error, info};
 use rand::prelude::*;
 use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordType, FullyQualifiedDomainName};
 use crate::packet_header::{DnsPacketHeader, PacketDirection};
@@ -46,7 +48,7 @@ impl DnsResolver {
     }
 
     fn select_root_dns_server_socket_addr() -> SocketAddr {
-        let server_ip = Self::ROOT_DNS_SERVERS.choose(&mut rand::thread_rng()).unwrap();
+        let server_ip = Self::ROOT_DNS_SERVERS.choose(&mut thread_rng()).unwrap();
         Self::dns_socket_for_ipv4(server_ip.parse().unwrap())
     }
 
@@ -73,10 +75,13 @@ impl DnsResolver {
     fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsRecord) -> Option<DnsPacket> {
         info!("Connecting to: {dest:?}");
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        socket.set_nonblocking(true).unwrap();
+        info!("Bound {socket:?}");
         socket.connect(dest).unwrap();
+        info!("Connected to {dest:?}");
 
         // Send the question
-        let mut rng = rand::thread_rng();
+        let mut rng = thread_rng();
         let transaction_id = rng.gen_range(0..u16::MAX) as u16;
         let packet = DnsPacketWriter::new_packet_from_records(
             DnsPacketWriterParams::new(
@@ -86,8 +91,25 @@ impl DnsResolver {
             ),
             vec![(DnsPacketRecordType::QuestionRecord, question)]
         );
+        debug!("Sending to {socket:?}...");
         socket.send(&packet).expect("Failed to send question to {dest}");
-        Self::await_and_parse_response(&socket, transaction_id).1
+        debug!("Sent!");
+
+        for attempt in 0..3 {
+            let response = Self::await_and_parse_response(&socket, transaction_id);
+            match response {
+                Ok(packet) => return Some(packet),
+                Err(ref err) => {
+                    info!("Error reading from the socket: {}", err.kind());
+                    thread::sleep(Duration::from_millis(100 * (attempt + 1)));
+                    info!("Slept, will try again");
+                }
+            }
+        }
+        error!("Out of attempts, will return None");
+        // PT: Panic for testing
+        //panic!("couldn't connect")
+        None
     }
 
     fn get_record_from_cache_for_recursive_resolution(
