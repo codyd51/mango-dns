@@ -1,8 +1,8 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 use bitvec::prelude::*;
 use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordData};
-use crate::packet_header::PacketDirection;
-use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw};
+use crate::packet_header::{PacketDirection, ResponseFields};
+use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw, DnsPacketResponseCode};
 
 pub(crate) struct DnsPacketWriterParams {
     transaction_id: u16,
@@ -167,7 +167,7 @@ mod test{
     use std::net::Ipv4Addr;
     use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType};
     use crate::packet_header::{PacketDirection, ResponseFields};
-    use crate::packet_header_layout::DnsOpcode;
+    use crate::packet_header_layout::{DnsOpcode, DnsPacketResponseCode};
     use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
 
     #[test]
@@ -192,7 +192,7 @@ mod test{
                     ResponseFields::new(
                         true,
                         false,
-                        0
+                        DnsPacketResponseCode::Success,
                     )
                 ),
             ),

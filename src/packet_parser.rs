@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use bitvec::prelude::*;
 use log::{debug, trace};
-use crate::dns_record::{DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType, FullyQualifiedDomainName, StartOfAuthorityRecordData};
+use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType, FullyQualifiedDomainName, StartOfAuthorityRecordData};
 use crate::packet_header::DnsPacketHeader;
 use crate::packet_header_layout::DnsPacketHeaderRaw;
 

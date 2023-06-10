@@ -1,7 +1,9 @@
+use std::fmt::{Display, Formatter};
 use std::mem;
 use bitvec::prelude::*;
+use crate::packet_parser::DnsPacket;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum DnsOpcode {
     Query = 0,
     Status = 2,
@@ -18,6 +20,34 @@ impl TryFrom<usize> for DnsOpcode {
             4 => Ok(Self::Notify),
             _ => Err(value),
         }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum DnsPacketResponseCode {
+    Success = 0b0000,
+    NxDomain = 0b0011,
+}
+
+impl TryFrom<usize> for DnsPacketResponseCode {
+    type Error = usize;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        match value {
+            0b0000 => Ok(Self::Success),
+            0b0011 => Ok(Self::NxDomain),
+            _ => Err(value),
+        }
+    }
+}
+
+impl Display for DnsPacketResponseCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            DnsPacketResponseCode::Success => "Success",
+            DnsPacketResponseCode::NxDomain => "NxDomain",
+        };
+        write!(f, "{}", s)
     }
 }
 
