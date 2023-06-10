@@ -21,6 +21,7 @@ pub(crate) enum DnsRecordType {
     CanonicalName = 5,
     DelegationSigner = 43,
     EDNSOpt = 41,
+    Text = 16,
 }
 
 impl TryFrom<usize> for DnsRecordType {
@@ -38,6 +39,7 @@ impl TryFrom<usize> for DnsRecordType {
             5 => Ok(Self::CanonicalName),
             43 => Ok(Self::DelegationSigner),
             41 => Ok(Self::EDNSOpt),
+            16 => Ok(Self::Text),
             _ => Err(value),
         }
     }
@@ -184,6 +186,7 @@ impl Display for DnsRecord {
             DnsRecordType::CanonicalName => "CNAME",
             DnsRecordType::DelegationSigner => "DS",
             DnsRecordType::EDNSOpt => "OPT",
+            DnsRecordType::Text => "TXT",
         };
         let record_data = match &self.record_data {
             None => "None".to_string(),
