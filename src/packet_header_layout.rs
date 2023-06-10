@@ -52,7 +52,7 @@ impl Display for DnsPacketResponseCode {
 }
 
 #[derive(Debug)]
-pub(crate) struct DnsPacketHeaderRaw(pub(crate) BitArray<[u16; 6], Msb0>);
+pub(crate) struct DnsPacketHeaderRaw(pub(crate) BitArray<[u16; 6], Lsb0>);
 
 /// Returns the number of bits in `count` u16s
 fn u16s(count: usize) -> usize {
@@ -61,6 +61,10 @@ fn u16s(count: usize) -> usize {
 
 impl DnsPacketHeaderRaw {
     pub(crate) const HEADER_SIZE: usize = mem::size_of::<Self>();
+
+    fn new() -> Self {
+        Self(BitArray::new([0; 6]))
+    }
 
     fn get_u16_at_u16_idx(&self, u16_idx: usize) -> usize {
         (self.0[u16s(u16_idx)..u16s(u16_idx + 1)].load::<u16>()).to_be() as _
@@ -110,29 +114,24 @@ impl DnsPacketHeaderRaw {
         self.set_u16_at_u16_idx(5, val)
     }
 
-    fn packed_flags(&self) -> BitArray<u16, Msb0> {
-        let mut flags = self.get_u16_at_u16_idx(1) as u16;
-        flags = flags.to_le();
-        BitArray::from(flags)
-    }
-
-    fn packed_flags_mut(&mut self) -> &mut BitSlice<u16, Msb0> {
-        &mut self.0[u16s(1)..u16s(2)]
-    }
-
     fn get_packed_flag_at_flags_bit_idx(&self, packed_flags_bit_idx: usize) -> bool {
-        self.packed_flags()[packed_flags_bit_idx..packed_flags_bit_idx + 1].load::<u8>() == 1
-        //self.packed_flags().get(packed_flags_bit_idx).unwrap()
+        let flags = self.get_u16_at_u16_idx(1) as u16;
+        let flags_bits = flags.view_bits::<Msb0>();
+        let result = flags_bits.get(packed_flags_bit_idx);
+        match result {
+            Some(a) => {
+                *a
+            }
+            None => panic!("Invalid bit index {packed_flags_bit_idx}")
+        }
     }
 
     pub(crate) fn set_packed_flag_at_flags_bit_idx(&mut self, packed_flags_bit_idx: usize, flag: bool) {
         let mut flags = self.get_u16_at_u16_idx(1) as u16;
-        flags = flags.to_le();
-        let v: &mut BitSlice<u16, Msb0> = BitSlice::from_element_mut(&mut flags);
-        v.set(packed_flags_bit_idx, flag);
+        let flags_bits = flags.view_bits_mut::<Msb0>();
+        flags_bits.set(packed_flags_bit_idx, flag);
         self.set_u16_at_u16_idx(1, flags);
 
-        //self.packed_flags_mut().set(packed_flags_bit_idx, flag)
     }
 
     pub(crate) fn is_response(&self) -> bool {
@@ -144,11 +143,17 @@ impl DnsPacketHeaderRaw {
     }
 
     pub(crate) fn opcode(&self) -> usize {
-        self.packed_flags()[1..5].load()
+        let flags = self.get_u16_at_u16_idx(1) as u16;
+        let flags_bits = flags.view_bits::<Msb0>();
+        let bits = flags_bits.get(1..5).unwrap();
+        bits.load::<u16>() as usize
     }
 
     pub(crate) fn set_opcode(&mut self, val: u8) {
-        self.packed_flags_mut()[1..5].store(val)
+        let mut flags = self.get_u16_at_u16_idx(1) as u16;
+        let mut flags_bits = flags.view_bits_mut::<Msb0>();
+        flags_bits[1..5].store(val);
+        self.set_u16_at_u16_idx(1, flags);
     }
 
     pub(crate) fn is_authoritative_answer(&self) -> bool {
@@ -163,11 +168,82 @@ impl DnsPacketHeaderRaw {
         self.get_packed_flag_at_flags_bit_idx(7)
     }
 
+    pub(crate) fn set_is_recursion_desired(&mut self, val: bool) {
+        self.set_packed_flag_at_flags_bit_idx(7, val)
+    }
+
     pub(crate) fn is_recursion_available(&self) -> bool {
         self.get_packed_flag_at_flags_bit_idx(8)
     }
 
+    pub(crate) fn set_is_recursion_available(&mut self, val: bool) {
+        self.set_packed_flag_at_flags_bit_idx(8, val)
+    }
+
     pub(crate) fn response_code(&self) -> usize {
-        self.packed_flags()[12..].load()
+        /*
+        let packed_flags = self.packed_flags();
+        let bits = packed_flags.get(12..16).unwrap();
+        bits.load::<u16>() as usize
+        */
+        let flags = self.get_u16_at_u16_idx(1) as u16;
+        let flags_bits = flags.view_bits::<Msb0>();
+        let bits = flags_bits.get(12..16).unwrap();
+        bits.load::<u16>() as usize
+    }
+
+    pub(crate) fn set_response_code(&mut self, val: u8) {
+        let mut flags = self.get_u16_at_u16_idx(1) as u16;
+        let flags_bits = flags.view_bits_mut::<Msb0>();
+        flags_bits[12..16].store(val);
+        self.set_u16_at_u16_idx(1, flags);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::mem;
+    use bitvec::prelude::*;
+    use crate::packet_header_layout::DnsPacketHeaderRaw;
+
+    fn get_u16_from_header(header: &DnsPacketHeaderRaw, word_idx: usize) -> u16 {
+        let header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
+        let byte_idx = word_idx * mem::size_of::<u16>();
+        let bytes_as_u16 = ((header_bytes[byte_idx] as u16) << 8) | (header_bytes[byte_idx + 1] as u16);
+        bytes_as_u16
+    }
+
+    #[test]
+    fn packed_header_fields() {
+        let mut header = DnsPacketHeaderRaw::new();
+        header.set_identifier(0x1234);
+        assert_eq!(get_u16_from_header(&header, 0), 0x1234);
+        assert_eq!(header.get_u16_at_u16_idx(0), 0x1234);
+        assert_eq!(header.identifier(), 0x1234);
+
+        let mut header = DnsPacketHeaderRaw::new();
+        header.set_is_response(true);
+        assert!(header.is_response());
+        assert_eq!(get_u16_from_header(&header, 1), 0x8000);
+
+        let mut header = DnsPacketHeaderRaw::new();
+        header.set_is_recursion_desired(true);
+        assert!(header.is_recursion_desired());
+        assert_eq!(get_u16_from_header(&header, 1), 0x0100);
+
+        let mut header = DnsPacketHeaderRaw::new();
+        header.set_is_recursion_available(true);
+        assert!(header.is_recursion_available());
+        assert_eq!(get_u16_from_header(&header, 1), 0x0080);
+
+        let mut header = DnsPacketHeaderRaw::new();
+        header.set_response_code(0b11);
+        assert_eq!(header.response_code(), 0b11);
+        assert_eq!(get_u16_from_header(&header, 1), 0x0003);
+
+        let mut header = DnsPacketHeaderRaw::new();
+        header.set_opcode(0b1111);
+        assert_eq!(header.opcode(), 0b1111);
+        assert_eq!(get_u16_from_header(&header, 1), 0b111100000000000);
     }
 }
