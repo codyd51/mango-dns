@@ -258,6 +258,8 @@ impl<'a> DnsPacketBodyParser<'a> {
 pub(crate) struct DnsPacketParser;
 
 impl DnsPacketParser {
+    pub(crate) const MAX_UDP_PACKET_SIZE: usize = 512;
+
     pub(crate) fn parse_packet_buffer(packet_buffer: &[u8]) -> DnsPacket {
         let (header_data, body_data) = packet_buffer.split_at(DnsPacketHeaderRaw::HEADER_SIZE);
         let header_raw = unsafe {

@@ -141,8 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // TODO(PT): MAX_DNS_UDP_PACKET_SIZE
-    let mut buf = [0; 512];
+    let mut buf = [0; DnsPacketParser::MAX_UDP_PACKET_SIZE];
     loop {
         let (len, addr) = r.recv_from(&mut buf).await?;
         //println!("{:?} bytes received from {:?}", len, addr);
