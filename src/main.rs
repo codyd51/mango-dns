@@ -1,16 +1,15 @@
 use crate::dns_record::{
     DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType,
 };
-use crate::packet_header::{DnsPacketHeader, PacketDirection, ResponseFields};
+use crate::packet_header::DnsPacketHeader;
 use crate::packet_header_layout::{DnsOpcode, DnsPacketResponseCode};
 use crate::packet_parser::DnsPacketParser;
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
 use crate::resolver::{resolve_one_record, DnsResolver};
 use async_channel::Receiver;
 use log::{debug, error, info};
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
 
 mod dns_record;
 mod packet_header;
@@ -97,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let r = Arc::new(socket);
     let (tx, rx) = async_channel::unbounded();
 
-    for i in 0..8 {
+    for _ in 0..8 {
         let rx_clone: Receiver<(Vec<u8>, SocketAddr)> = rx.clone();
         let socket_clone = r.clone();
         tokio::spawn(async move {

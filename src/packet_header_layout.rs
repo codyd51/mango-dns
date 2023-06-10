@@ -1,4 +1,3 @@
-use crate::packet_parser::DnsPacket;
 use bitvec::prelude::*;
 use std::fmt::{Display, Formatter};
 use std::mem;
@@ -152,7 +151,7 @@ impl DnsPacketHeaderRaw {
 
     pub(crate) fn set_opcode(&mut self, val: u8) {
         let mut flags = self.get_u16_at_u16_idx(1) as u16;
-        let mut flags_bits = flags.view_bits_mut::<Msb0>();
+        let flags_bits = flags.view_bits_mut::<Msb0>();
         flags_bits[1..5].store(val);
         self.set_u16_at_u16_idx(1, flags);
     }

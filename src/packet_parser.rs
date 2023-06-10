@@ -7,8 +7,8 @@ use crate::packet_header_layout::DnsPacketHeaderRaw;
 use bitvec::prelude::*;
 use log::{debug, trace};
 use std::fmt::{Display, Formatter};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
-use std::{io, mem};
+use std::mem;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 /// 'High-level' representation of a packet
 #[derive(Debug)]

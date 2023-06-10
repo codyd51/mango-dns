@@ -2,7 +2,7 @@ use crate::dns_record::{
     DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordType,
     FullyQualifiedDomainName,
 };
-use crate::packet_header::{DnsPacketHeader, PacketDirection};
+use crate::packet_header::PacketDirection;
 use crate::packet_header_layout::{DnsOpcode, DnsPacketResponseCode};
 use crate::packet_parser::{DnsPacket, DnsPacketParser};
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
@@ -10,8 +10,7 @@ use log::{debug, error, info};
 use rand::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
 use std::{io, thread};
 
@@ -46,10 +45,6 @@ impl DnsResolver {
         SocketAddr::new(IpAddr::V4(ip), 53)
     }
 
-    fn dns_socket_for_ipv6(ip: Ipv6Addr) -> SocketAddr {
-        SocketAddr::new(IpAddr::V6(ip), 53)
-    }
-
     fn select_root_dns_server_socket_addr() -> SocketAddr {
         let server_ip = Self::ROOT_DNS_SERVERS.choose(&mut thread_rng()).unwrap();
         Self::dns_socket_for_ipv4(server_ip.parse().unwrap())
@@ -59,9 +54,9 @@ impl DnsResolver {
         // Await the response
         let mut response_buffer = vec![0; 1500];
         info!("Awaiting response from {socket:?} for transaction ID {transaction_id:X}");
-        let (packet_size, src) = socket.recv_from(&mut response_buffer)?;
+        let (packet_size, _) = socket.recv_from(&mut response_buffer)?;
         let packet_data = &response_buffer[..packet_size];
-        let packet = DnsPacketParser::parse_packet_buffer(&response_buffer);
+        let packet = DnsPacketParser::parse_packet_buffer(&packet_data);
         let packet_header = &packet.header;
 
         info!("Received response from {socket:?} for transaction ID {transaction_id:X}:");
@@ -83,9 +78,7 @@ impl DnsResolver {
         info!("Connecting to: {dest:?}");
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         socket.set_nonblocking(true).unwrap();
-        info!("Bound {socket:?}");
         socket.connect(dest).unwrap();
-        info!("Connected to {dest:?}");
 
         // Send the question
         let mut rng = thread_rng();
@@ -98,7 +91,6 @@ impl DnsResolver {
         socket
             .send(&packet)
             .unwrap_or_else(|_| panic!("Failed to send question to {dest}"));
-        debug!("Sent!");
 
         for attempt in 0..3 {
             let response = Self::await_and_parse_response(&socket, transaction_id);
@@ -112,8 +104,6 @@ impl DnsResolver {
             }
         }
         error!("Out of attempts, will return None");
-        // PT: Panic for testing
-        //panic!("couldn't connect")
         None
     }
 
@@ -152,6 +142,14 @@ impl DnsResolver {
         }
     }
 
+    fn add_records_to_cache(&self, records: &[DnsRecord]) {
+        let mut cache = self.cache.borrow_mut();
+        for record in records.iter() {
+            let fqdn = FullyQualifiedDomainName(record.name.clone());
+            cache.entry(fqdn).or_insert(vec![]).push(record.clone());
+        }
+    }
+
     pub(crate) fn resolve_question(&self, question: &DnsRecord) -> Option<DnsRecordData> {
         // First, check whether the answer is in the cache
         let requested_fqdn = FullyQualifiedDomainName(question.name.clone());
@@ -175,29 +173,14 @@ impl DnsResolver {
             info!("\t\tResponse:\n{response}");
 
             // First, add the additional records to our cache, as we might need them to resolve the next destination
-            for additional_record in response.additional_records.iter() {
-                let mut cache = self.cache.borrow_mut();
-                let fqdn = FullyQualifiedDomainName(additional_record.name.clone());
-                cache
-                    .entry(fqdn)
-                    .or_insert(vec![])
-                    .push(additional_record.clone());
-            }
+            self.add_records_to_cache(&response.additional_records);
+            // Cache any answers we received too
+            self.add_records_to_cache(&response.answer_records);
 
-            // Did we receive an answer?
             if !response.answer_records.is_empty() {
-                debug!("Found answers!");
-                // Add the answers to the cache
-                for answer_record in response.answer_records.iter() {
-                    let mut cache = self.cache.borrow_mut();
-                    let fqdn = FullyQualifiedDomainName(answer_record.name.clone());
-                    cache
-                        .entry(fqdn)
-                        .or_insert(vec![])
-                        .push(answer_record.clone());
-                }
-
-                // And return the first answer
+                // Return the first answer
+                // TODO(PT): We could return all answer records
+                debug!("\t\tFound answer records! {:#?}", response.answer_records);
                 return Some(
                     response.answer_records[0]
                         .record_data
@@ -221,21 +204,8 @@ impl DnsResolver {
                 return None;
             }
 
-            let authority_nameservers: Vec<FullyQualifiedDomainName> = response
-                .authority_records
-                .iter()
-                .filter_map(
-                    |authority_record| match authority_record.record_data.as_ref() {
-                        Some(record_data) => match record_data {
-                            DnsRecordData::NameServer(authority_name) => {
-                                Some(authority_name.clone())
-                            }
-                            _ => None,
-                        },
-                        None => None,
-                    },
-                )
-                .collect();
+            let authority_nameservers =
+                Self::get_nameserver_names_from_records(&response.authority_records);
             match self.select_and_resolve_nameserver_from_pool(authority_nameservers) {
                 Some(ns_record_data) => match ns_record_data {
                     DnsRecordData::A(ipv4_addr) => {
@@ -250,6 +220,19 @@ impl DnsResolver {
                 }
             }
         }
+    }
+
+    fn get_nameserver_names_from_records(records: &[DnsRecord]) -> Vec<FullyQualifiedDomainName> {
+        records
+            .iter()
+            .filter_map(|record| match record.record_data.as_ref() {
+                Some(record_data) => match record_data {
+                    DnsRecordData::NameServer(ns_name) => Some(ns_name.clone()),
+                    _ => None,
+                },
+                None => None,
+            })
+            .collect()
     }
 
     fn select_and_resolve_nameserver_from_pool(
