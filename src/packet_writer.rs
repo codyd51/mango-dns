@@ -1,8 +1,8 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
-use bitvec::prelude::*;
 use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordData};
 use crate::packet_header::{PacketDirection, ResponseFields};
 use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw, DnsPacketResponseCode};
+use bitvec::prelude::*;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 pub(crate) struct DnsPacketWriterParams {
     transaction_id: u16,
@@ -11,11 +11,7 @@ pub(crate) struct DnsPacketWriterParams {
 }
 
 impl DnsPacketWriterParams {
-    pub(crate) fn new(
-        transaction_id: u16,
-        opcode: DnsOpcode,
-        direction: PacketDirection,
-    ) -> Self {
+    pub(crate) fn new(transaction_id: u16, opcode: DnsOpcode, direction: PacketDirection) -> Self {
         Self {
             transaction_id,
             opcode,
@@ -30,13 +26,7 @@ impl DnsPacketWriterParams {
         Self::new(
             transaction_id as _,
             DnsOpcode::Query,
-            PacketDirection::Response(
-                ResponseFields::new(
-                    true,
-                    true,
-                    response_code as _,
-                )
-            )
+            PacketDirection::Response(ResponseFields::new(true, true, response_code as _)),
         )
     }
 }
@@ -62,8 +52,8 @@ impl DnsPacketWriter {
             PacketDirection::Query => {
                 // Not relevant for queries
                 DnsPacketResponseCode::Success
-            },
-            PacketDirection::Response(fields) => fields.response_code
+            }
+            PacketDirection::Response(fields) => fields.response_code,
         };
         header.set_response_code(response_code as _);
 
@@ -75,7 +65,10 @@ impl DnsPacketWriter {
         header
     }
 
-    pub(crate) fn new_packet_from_records(params: DnsPacketWriterParams, record_types_and_records: Vec<(DnsPacketRecordType, &DnsRecord)>) -> Vec<u8> {
+    pub(crate) fn new_packet_from_records(
+        params: DnsPacketWriterParams,
+        record_types_and_records: Vec<(DnsPacketRecordType, &DnsRecord)>,
+    ) -> Vec<u8> {
         let mut question_record_count = 0;
         let mut answer_record_count = 0;
         let mut authority_record_count = 0;
@@ -122,7 +115,7 @@ impl DnsPacketWriter {
                 match &record_data {
                     DnsRecordData::A(ipv4_addr) => {
                         writer.write_ipv4_addr(*ipv4_addr);
-                    },
+                    }
                     DnsRecordData::CanonicalName(fqdn) => {
                         let mut name_buffer = vec![];
                         let name_len = Self::write_name_to(&fqdn.0, &mut name_buffer);
@@ -203,14 +196,15 @@ impl DnsPacketWriter {
     }
 }
 
-
 #[cfg(test)]
-mod test{
-    use std::net::Ipv4Addr;
-    use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType};
+mod test {
+    use crate::dns_record::{
+        DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType,
+    };
     use crate::packet_header::{PacketDirection, ResponseFields};
     use crate::packet_header_layout::{DnsOpcode, DnsPacketResponseCode};
     use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
+    use std::net::Ipv4Addr;
 
     #[test]
     fn write_response() {
@@ -230,15 +224,13 @@ mod test{
             DnsPacketWriterParams::new(
                 transaction_id,
                 DnsOpcode::Query,
-                PacketDirection::Response(
-                    ResponseFields::new(
-                        true,
-                        false,
-                        DnsPacketResponseCode::Success,
-                    )
-                ),
+                PacketDirection::Response(ResponseFields::new(
+                    true,
+                    false,
+                    DnsPacketResponseCode::Success,
+                )),
             ),
-            vec![(DnsPacketRecordType::AnswerRecord, &answer_record)]
+            vec![(DnsPacketRecordType::AnswerRecord, &answer_record)],
         );
         let transaction_id_bytes = transaction_id.to_be_bytes();
         let ttl_bytes = ttl.to_be_bytes();
@@ -247,35 +239,59 @@ mod test{
             vec![
                 // Header
                 //   Transaction ID
-                transaction_id_bytes[0], transaction_id_bytes[1],
+                transaction_id_bytes[0],
+                transaction_id_bytes[1],
                 //   Packed flags
-                0x80, 0x00,
+                0x80,
+                0x00,
                 //   Other header fields
                 //   Question count
-                0x00, 0x00,
+                0x00,
+                0x00,
                 //   Answer count
-                0x00, 0x01,
+                0x00,
+                0x01,
                 //   Authority RR count
-                0x00, 0x00,
+                0x00,
+                0x00,
                 //   Additional RR count
-                0x00, 0x00,
+                0x00,
+                0x00,
                 // Data
                 //   'axleos'
-                0x06, 0x61, 0x78, 0x6c, 0x65, 0x6f, 0x73,
+                0x06,
+                0x61,
+                0x78,
+                0x6c,
+                0x65,
+                0x6f,
+                0x73,
                 //   'com'
-                0x03, 0x63, 0x6f, 0x6d,
+                0x03,
+                0x63,
+                0x6f,
+                0x6d,
                 //   Null byte to end labels
                 0x00,
                 //   Type: A
-                0x00, 0x01,
+                0x00,
+                0x01,
                 //   Class: IN
-                0x00, 0x01,
+                0x00,
+                0x01,
                 //   TTL: 300s
-                ttl_bytes[0], ttl_bytes[1], ttl_bytes[2], ttl_bytes[3],
+                ttl_bytes[0],
+                ttl_bytes[1],
+                ttl_bytes[2],
+                ttl_bytes[3],
                 //   Data length: 4
-                0x00, 0x04,
+                0x00,
+                0x04,
                 //   IP address
-                172, 67, 189, 115,
+                172,
+                67,
+                189,
+                115,
             ]
         )
     }

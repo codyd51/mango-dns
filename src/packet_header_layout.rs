@@ -1,7 +1,7 @@
+use crate::packet_parser::DnsPacket;
+use bitvec::prelude::*;
 use std::fmt::{Display, Formatter};
 use std::mem;
-use bitvec::prelude::*;
-use crate::packet_parser::DnsPacket;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum DnsOpcode {
@@ -119,19 +119,20 @@ impl DnsPacketHeaderRaw {
         let flags_bits = flags.view_bits::<Msb0>();
         let result = flags_bits.get(packed_flags_bit_idx);
         match result {
-            Some(a) => {
-                *a
-            }
-            None => panic!("Invalid bit index {packed_flags_bit_idx}")
+            Some(a) => *a,
+            None => panic!("Invalid bit index {packed_flags_bit_idx}"),
         }
     }
 
-    pub(crate) fn set_packed_flag_at_flags_bit_idx(&mut self, packed_flags_bit_idx: usize, flag: bool) {
+    pub(crate) fn set_packed_flag_at_flags_bit_idx(
+        &mut self,
+        packed_flags_bit_idx: usize,
+        flag: bool,
+    ) {
         let mut flags = self.get_u16_at_u16_idx(1) as u16;
         let flags_bits = flags.view_bits_mut::<Msb0>();
         flags_bits.set(packed_flags_bit_idx, flag);
         self.set_u16_at_u16_idx(1, flags);
-
     }
 
     pub(crate) fn is_response(&self) -> bool {
@@ -202,14 +203,15 @@ impl DnsPacketHeaderRaw {
 
 #[cfg(test)]
 mod test {
-    use std::mem;
-    use bitvec::prelude::*;
     use crate::packet_header_layout::DnsPacketHeaderRaw;
+    use bitvec::prelude::*;
+    use std::mem;
 
     fn get_u16_from_header(header: &DnsPacketHeaderRaw, word_idx: usize) -> u16 {
         let header_bytes = unsafe { header.0.into_inner().align_to::<u8>().1.to_vec() };
         let byte_idx = word_idx * mem::size_of::<u16>();
-        let bytes_as_u16 = ((header_bytes[byte_idx] as u16) << 8) | (header_bytes[byte_idx + 1] as u16);
+        let bytes_as_u16 =
+            ((header_bytes[byte_idx] as u16) << 8) | (header_bytes[byte_idx + 1] as u16);
         bytes_as_u16
     }
 

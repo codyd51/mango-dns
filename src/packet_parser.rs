@@ -1,12 +1,14 @@
-use std::{io, mem};
-use std::fmt::{Display, Formatter};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
-use bitvec::prelude::*;
-use log::{debug, trace};
-use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType, FullyQualifiedDomainName, StartOfAuthorityRecordData};
+use crate::dns_record::{
+    DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType,
+    FullyQualifiedDomainName, StartOfAuthorityRecordData,
+};
 use crate::packet_header::DnsPacketHeader;
 use crate::packet_header_layout::DnsPacketHeaderRaw;
-
+use bitvec::prelude::*;
+use log::{debug, trace};
+use std::fmt::{Display, Formatter};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::{io, mem};
 
 /// 'High-level' representation of a packet
 #[derive(Debug)]
@@ -64,13 +66,8 @@ pub(crate) struct DnsPacketBodyParser<'a> {
 }
 
 impl<'a> DnsPacketBodyParser<'a> {
-    fn new(
-        body: &'a [u8],
-    ) -> Self {
-        Self {
-            body,
-            cursor: 0,
-        }
+    fn new(body: &'a [u8]) -> Self {
+        Self { body, cursor: 0 }
     }
 
     fn parse_u8_at(&self, cursor: &mut usize) -> usize {
@@ -88,14 +85,18 @@ impl<'a> DnsPacketBodyParser<'a> {
 
     fn parse_u16(&mut self) -> usize {
         let u16_size = mem::size_of::<u16>();
-        let val = self.body[self.cursor..self.cursor + u16_size].view_bits::<Msb0>().load_be::<u16>();
+        let val = self.body[self.cursor..self.cursor + u16_size]
+            .view_bits::<Msb0>()
+            .load_be::<u16>();
         self.cursor += u16_size;
         val as _
     }
 
     fn parse_u32(&mut self) -> usize {
         let u32_size = mem::size_of::<u32>();
-        let val = self.body[self.cursor..self.cursor + u32_size].view_bits::<Msb0>().load_be::<u32>();
+        let val = self.body[self.cursor..self.cursor + u32_size]
+            .view_bits::<Msb0>()
+            .load_be::<u32>();
         self.cursor += u32_size;
         val as _
     }
@@ -129,9 +130,13 @@ impl<'a> DnsPacketBodyParser<'a> {
                 let byte1 = (label_len as u8) & !(3_u8 << 6);
                 let byte2 = self.parse_u8_at(cursor) as u8;
                 let label_offset_into_packet = ((byte1 as u16) << 8) | byte2 as u16;
-                assert!(label_offset_into_packet as usize >= DnsPacketHeaderRaw::HEADER_SIZE, "Cannot follow pointer into packet header");
+                assert!(
+                    label_offset_into_packet as usize >= DnsPacketHeaderRaw::HEADER_SIZE,
+                    "Cannot follow pointer into packet header"
+                );
 
-                let label_offset_into_body = label_offset_into_packet as usize - DnsPacketHeaderRaw::HEADER_SIZE;
+                let label_offset_into_body =
+                    label_offset_into_packet as usize - DnsPacketHeaderRaw::HEADER_SIZE;
                 let mut pointer_cursor = label_offset_into_body;
                 // Recurse and read a name from the pointer
                 let name_from_pointer = self.parse_name_at(&mut pointer_cursor);
@@ -163,11 +168,13 @@ impl<'a> DnsPacketBodyParser<'a> {
     }
 
     fn parse_record_type(&mut self) -> DnsRecordType {
-        DnsRecordType::try_from(self.parse_u16()).unwrap_or_else(|v| panic!("{v} is not a known query type"))
+        DnsRecordType::try_from(self.parse_u16())
+            .unwrap_or_else(|v| panic!("{v} is not a known query type"))
     }
 
     fn parse_record_class(&mut self) -> DnsRecordClass {
-        DnsRecordClass::try_from(self.parse_u16()).unwrap_or_else(|v| panic!("{v} is not a known query class"))
+        DnsRecordClass::try_from(self.parse_u16())
+            .unwrap_or_else(|v| panic!("{v} is not a known query class"))
     }
 
     fn parse_ttl(&mut self) -> DnsRecordTtl {
@@ -179,7 +186,11 @@ impl<'a> DnsPacketBodyParser<'a> {
     }
 
     fn parse_ipv6(&mut self) -> [u8; 16] {
-        (0..16).map(|_| self.parse_u8() as u8).collect::<Vec<u8>>().try_into().unwrap()
+        (0..16)
+            .map(|_| self.parse_u8() as u8)
+            .collect::<Vec<u8>>()
+            .try_into()
+            .unwrap()
     }
 
     fn parse_record(&mut self, packet_record_type: DnsPacketRecordType) -> DnsRecord {
@@ -201,41 +212,31 @@ impl<'a> DnsPacketBodyParser<'a> {
 
         // Question records stop here
         if packet_record_type == DnsPacketRecordType::QuestionRecord {
-            return DnsRecord::new_question(
-                &name,
-                record_type,
-                record_class,
-            )
+            return DnsRecord::new_question(&name, record_type, record_class);
         }
 
         let ttl = self.parse_ttl();
         let data_length = self.parse_u16();
         let record_data = match record_type {
-            DnsRecordType::A => {
-                Some(DnsRecordData::A(Ipv4Addr::from(self.parse_ipv4())))
-            }
-            DnsRecordType::AAAA => {
-                Some(DnsRecordData::AAAA(Ipv6Addr::from(self.parse_ipv6())))
-            }
-            DnsRecordType::NameServer => {
-                Some(DnsRecordData::NameServer(FullyQualifiedDomainName(self.parse_name())))
-            }
-            DnsRecordType::CanonicalName => {
-                Some(DnsRecordData::CanonicalName(FullyQualifiedDomainName(self.parse_name())))
-            }
-            DnsRecordType::StartOfAuthority => {
-                Some(DnsRecordData::StartOfAuthority(
-                    StartOfAuthorityRecordData::new(
-                        FullyQualifiedDomainName(self.parse_name()),
-                        FullyQualifiedDomainName(self.parse_name()),
-                        self.parse_u32(),
-                        self.parse_u32(),
-                        self.parse_u32(),
-                        self.parse_u32(),
-                        self.parse_u32(),
-                    )
-                ))
-            }
+            DnsRecordType::A => Some(DnsRecordData::A(Ipv4Addr::from(self.parse_ipv4()))),
+            DnsRecordType::AAAA => Some(DnsRecordData::AAAA(Ipv6Addr::from(self.parse_ipv6()))),
+            DnsRecordType::NameServer => Some(DnsRecordData::NameServer(FullyQualifiedDomainName(
+                self.parse_name(),
+            ))),
+            DnsRecordType::CanonicalName => Some(DnsRecordData::CanonicalName(
+                FullyQualifiedDomainName(self.parse_name()),
+            )),
+            DnsRecordType::StartOfAuthority => Some(DnsRecordData::StartOfAuthority(
+                StartOfAuthorityRecordData::new(
+                    FullyQualifiedDomainName(self.parse_name()),
+                    FullyQualifiedDomainName(self.parse_name()),
+                    self.parse_u32(),
+                    self.parse_u32(),
+                    self.parse_u32(),
+                    self.parse_u32(),
+                    self.parse_u32(),
+                ),
+            )),
             _ => {
                 // Skip past the bytes we're ignoring
                 debug!("Doing stub parsing of unhandled record type {record_type:?}");
@@ -243,15 +244,9 @@ impl<'a> DnsPacketBodyParser<'a> {
                     self.parse_u8();
                 }
                 None
-            },
+            }
         };
-        DnsRecord::new(
-            &name,
-            record_type,
-            record_class,
-            Some(ttl),
-            record_data
-        )
+        DnsRecord::new(&name, record_type, record_class, Some(ttl), record_data)
     }
 }
 
@@ -262,9 +257,7 @@ impl DnsPacketParser {
 
     pub(crate) fn parse_packet_buffer(packet_buffer: &[u8]) -> DnsPacket {
         let (header_data, body_data) = packet_buffer.split_at(DnsPacketHeaderRaw::HEADER_SIZE);
-        let header_raw = unsafe {
-            &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
-        };
+        let header_raw = unsafe { &*(header_data.as_ptr() as *const DnsPacketHeaderRaw) };
         let header = DnsPacketHeader::from(header_raw);
         let mut body_parser = DnsPacketBodyParser::new(body_data);
 
@@ -295,22 +288,28 @@ impl DnsPacketParser {
             additional_records.push(additional_record);
         }
 
-        DnsPacket::new(header, question_records, answer_records, authority_records, additional_records)
+        DnsPacket::new(
+            header,
+            question_records,
+            answer_records,
+            authority_records,
+            additional_records,
+        )
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::net::Ipv4Addr;
     use crate::packet_header::{DnsPacketHeader, PacketDirection};
     use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw};
+    use std::net::Ipv4Addr;
 
     #[test]
     fn parse_header() {
-        let header_data: [u8; 12] = [0xdc, 0xb7, 0x1, 0x20, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1];
-        let header_raw = unsafe {
-            &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
-        };
+        let header_data: [u8; 12] = [
+            0xdc, 0xb7, 0x1, 0x20, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1,
+        ];
+        let header_raw = unsafe { &*(header_data.as_ptr() as *const DnsPacketHeaderRaw) };
         assert_eq!(header_raw.opcode(), 0);
         let header = DnsPacketHeader::from(header_raw);
         assert_eq!(header.identifier, 0xdcb7);

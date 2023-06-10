@@ -61,7 +61,6 @@ impl TryFrom<usize> for DnsRecordClass {
     }
 }
 
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DnsRecordTtl(pub(crate) usize);
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -196,7 +195,7 @@ impl Display for DnsRecord {
                 DnsRecordData::NameServer(fqdn) => format!("{fqdn}"),
                 DnsRecordData::CanonicalName(fqdn) => format!("{fqdn}"),
                 DnsRecordData::StartOfAuthority(soa) => format!("{soa:?}"),
-            }
+            },
         };
         write!(
             f,
@@ -205,4 +204,3 @@ impl Display for DnsRecord {
         )
     }
 }
-

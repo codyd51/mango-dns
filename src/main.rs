@@ -1,33 +1,30 @@
-use log::{debug, error, info};
-use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
-use std::{io, net::SocketAddr, sync::Arc};
-use async_channel::Receiver;
-use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType};
+use crate::dns_record::{
+    DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType,
+};
 use crate::packet_header::{DnsPacketHeader, PacketDirection, ResponseFields};
 use crate::packet_header_layout::{DnsOpcode, DnsPacketResponseCode};
 use crate::packet_parser::DnsPacketParser;
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
-use crate::resolver::{DnsResolver, resolve_one_record};
+use crate::resolver::{resolve_one_record, DnsResolver};
+use async_channel::Receiver;
+use log::{debug, error, info};
+use std::{io, net::SocketAddr, sync::Arc};
+use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
 
-mod packet_parser;
-mod packet_header_layout;
 mod dns_record;
+mod packet_header;
+mod packet_header_layout;
+mod packet_parser;
 mod packet_writer;
 mod resolver;
-mod packet_header;
 
 /// Useful for testing
-async fn send_one_packet(
-    resolver: &DnsResolver,
-    socket: &UdpSocket,
-) {
-    let (question, response_record_data) = resolve_one_record(&resolver, "fake.axleos.com", DnsRecordType::AAAA);
+async fn send_one_packet(resolver: &DnsResolver, socket: &UdpSocket) {
+    let (question, response_record_data) =
+        resolve_one_record(&resolver, "fake.axleos.com", DnsRecordType::AAAA);
     let raw_header = DnsPacketWriter::new_raw_header(
-        &DnsPacketWriterParams::new_query_response(
-            0x1234,
-            DnsPacketResponseCode::NxDomain,
-        ),
+        &DnsPacketWriterParams::new_query_response(0x1234, DnsPacketResponseCode::NxDomain),
         1,
         0,
         0,
@@ -35,7 +32,9 @@ async fn send_one_packet(
     );
     let header = DnsPacketHeader::from(&raw_header);
     let response = generate_response_packet_from_question_and_response_record(
-        &header, &question, response_record_data
+        &header,
+        &question,
+        response_record_data,
     );
     let resp_addr = socket.local_addr().unwrap();
     socket.send_to(&response, &resp_addr).await.unwrap();
@@ -63,24 +62,25 @@ fn generate_response_packet_from_question_and_response_record(
             vec![
                 (DnsPacketRecordType::QuestionRecord, question),
                 (DnsPacketRecordType::AnswerRecord, &response_record),
-            ]
+            ],
         )
-    }
-    else {
+    } else {
         info!("\tQuestion{question} => NXDOMAIN");
         DnsPacketWriter::new_packet_from_records(
             DnsPacketWriterParams::new_query_response(
                 question_header.identifier,
                 DnsPacketResponseCode::NxDomain,
             ),
-            vec![(DnsPacketRecordType::QuestionRecord, question)]
+            vec![(DnsPacketRecordType::QuestionRecord, question)],
         )
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::Builder::new().filter_level(log::LevelFilter::Error).init();
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Error)
+        .init();
 
     let socket = UdpSocket::bind("127.0.0.1:53").await?;
     /*
@@ -110,8 +110,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         info!("Handling DNS query ID 0x{:x}", packet_header.identifier);
                         for (i, question) in packet.question_records.iter().enumerate() {
                             // Ignore questions about anything other than A/AAAA records
-                            if ![DnsRecordType::A, DnsRecordType::AAAA].contains(&question.record_type) {
-                                debug!("\tDropping query for unsupported record type {:?}", question.record_type);
+                            if ![DnsRecordType::A, DnsRecordType::AAAA]
+                                .contains(&question.record_type)
+                            {
+                                debug!(
+                                    "\tDropping query for unsupported record type {:?}",
+                                    question.record_type
+                                );
                                 continue;
                             }
 
@@ -123,11 +128,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 Some(a) => error!("\t{a:?}"),
                             }
 
-                            let response_packet = generate_response_packet_from_question_and_response_record(
-                                &packet_header,
-                                question,
-                                response
-                            );
+                            let response_packet =
+                                generate_response_packet_from_question_and_response_record(
+                                    &packet_header,
+                                    question,
+                                    response,
+                                );
 
                             socket_clone.send_to(&response_packet, &addr).await.unwrap();
                         }

@@ -1,5 +1,5 @@
-use std::fmt::{Display, Formatter};
 use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw, DnsPacketResponseCode};
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) struct ResponseFields {
@@ -55,8 +55,10 @@ impl From<&DnsPacketHeaderRaw> for DnsPacketHeader {
                 )),
                 false => PacketDirection::Query,
             },
-            opcode: DnsOpcode::try_from(raw.opcode()).unwrap_or_else(|op| panic!("Unexpected DNS opcode: {}", op)),
-            response_code: DnsPacketResponseCode::try_from(raw.response_code()).unwrap_or_else(|val| panic!("Unexpected response code: {}", val)),
+            opcode: DnsOpcode::try_from(raw.opcode())
+                .unwrap_or_else(|op| panic!("Unexpected DNS opcode: {}", op)),
+            response_code: DnsPacketResponseCode::try_from(raw.response_code())
+                .unwrap_or_else(|val| panic!("Unexpected response code: {}", val)),
             is_truncated: raw.is_truncated(),
             is_recursion_desired: raw.is_recursion_desired(),
             is_recursion_available: raw.is_recursion_available(),
@@ -74,15 +76,23 @@ impl Display for DnsPacketHeader {
         match &self.direction {
             PacketDirection::Query => writeln!(f, "\t[Query]")?,
             PacketDirection::Response(response_fields) => {
-                writeln!(f, "{}", match response_fields.is_authority {
-                    true => "\t[Authoritative]",
-                    false => "\t[Non-authoritative]",
-                })?;
+                writeln!(
+                    f,
+                    "{}",
+                    match response_fields.is_authority {
+                        true => "\t[Authoritative]",
+                        false => "\t[Non-authoritative]",
+                    }
+                )?;
 
-                writeln!(f, "{}", match response_fields.is_recursion_available {
-                    true => "\t[Recursive]",
-                    false => "\t[Non-recursive]",
-                })?;
+                writeln!(
+                    f,
+                    "{}",
+                    match response_fields.is_recursion_available {
+                        true => "\t[Recursive]",
+                        false => "\t[Non-recursive]",
+                    }
+                )?;
 
                 writeln!(f, "\t[Response code #{}]", response_fields.response_code)?;
             }

@@ -1,16 +1,19 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::{io, thread};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
-use std::time::Duration;
-use log::{debug, error, info};
-use rand::prelude::*;
-use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordType, FullyQualifiedDomainName};
+use crate::dns_record::{
+    DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordType,
+    FullyQualifiedDomainName,
+};
 use crate::packet_header::{DnsPacketHeader, PacketDirection};
 use crate::packet_header_layout::{DnsOpcode, DnsPacketResponseCode};
 use crate::packet_parser::{DnsPacket, DnsPacketParser};
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
+use log::{debug, error, info};
+use rand::prelude::*;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::time::Duration;
+use std::{io, thread};
 
 pub(crate) struct DnsResolver {
     cache: RefCell<HashMap<FullyQualifiedDomainName, Vec<DnsRecord>>>,
@@ -72,7 +75,11 @@ impl DnsResolver {
         Ok(packet)
     }
 
-    fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsRecord) -> Option<DnsPacket> {
+    fn send_question_and_await_response(
+        &self,
+        dest: &SocketAddr,
+        question: &DnsRecord,
+    ) -> Option<DnsPacket> {
         info!("Connecting to: {dest:?}");
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         socket.set_nonblocking(true).unwrap();
@@ -84,15 +91,13 @@ impl DnsResolver {
         let mut rng = thread_rng();
         let transaction_id = rng.gen_range(0..u16::MAX) as u16;
         let packet = DnsPacketWriter::new_packet_from_records(
-            DnsPacketWriterParams::new(
-                transaction_id,
-                DnsOpcode::Query,
-                PacketDirection::Query,
-            ),
-            vec![(DnsPacketRecordType::QuestionRecord, question)]
+            DnsPacketWriterParams::new(transaction_id, DnsOpcode::Query, PacketDirection::Query),
+            vec![(DnsPacketRecordType::QuestionRecord, question)],
         );
         debug!("Sending to {socket:?}...");
-        socket.send(&packet).unwrap_or_else(|_| panic!("Failed to send question to {dest}"));
+        socket
+            .send(&packet)
+            .unwrap_or_else(|_| panic!("Failed to send question to {dest}"));
         debug!("Sent!");
 
         for attempt in 0..3 {
@@ -117,13 +122,7 @@ impl DnsResolver {
         fqdn: &FullyQualifiedDomainName,
     ) -> Option<DnsRecordData> {
         // PT: My ISP doesn't support IPv6, so don't try to follow AAAA records during resolution
-        self.get_record_from_cache(
-            fqdn,
-            &[
-                DnsRecordType::A,
-                DnsRecordType::CanonicalName,
-            ]
-        )
+        self.get_record_from_cache(fqdn, &[DnsRecordType::A, DnsRecordType::CanonicalName])
     }
 
     fn get_record_from_cache_for_returning_response(
@@ -131,10 +130,7 @@ impl DnsResolver {
         fqdn: &FullyQualifiedDomainName,
         requested_record_type: &DnsRecordType,
     ) -> Option<DnsRecordData> {
-        self.get_record_from_cache(
-            fqdn,
-            &[*requested_record_type]
-        )
+        self.get_record_from_cache(fqdn, &[*requested_record_type])
     }
 
     fn get_record_from_cache(
@@ -149,20 +145,9 @@ impl DnsResolver {
 
             cached_records
                 .iter()
-                .find(|r| {
-                    allowed_record_types.contains(&r.record_type)
-                })
-                .map_or(
-                    None,
-                    |r| {
-                        Some(r.record_data
-                            .as_ref()
-                            .unwrap()
-                            .clone())
-                    }
-                )
-        }
-        else {
+                .find(|r| allowed_record_types.contains(&r.record_type))
+                .map_or(None, |r| Some(r.record_data.as_ref().unwrap().clone()))
+        } else {
             None
         }
     }
@@ -170,7 +155,9 @@ impl DnsResolver {
     pub(crate) fn resolve_question(&self, question: &DnsRecord) -> Option<DnsRecordData> {
         // First, check whether the answer is in the cache
         let requested_fqdn = FullyQualifiedDomainName(question.name.clone());
-        if let Some(cached_record) = self.get_record_from_cache_for_returning_response(&requested_fqdn, &question.record_type) {
+        if let Some(cached_record) = self
+            .get_record_from_cache_for_returning_response(&requested_fqdn, &question.record_type)
+        {
             debug!("Serving question from cache: {requested_fqdn}");
             return Some(cached_record);
         }
@@ -191,7 +178,10 @@ impl DnsResolver {
             for additional_record in response.additional_records.iter() {
                 let mut cache = self.cache.borrow_mut();
                 let fqdn = FullyQualifiedDomainName(additional_record.name.clone());
-                cache.entry(fqdn).or_insert(vec![]).push(additional_record.clone());
+                cache
+                    .entry(fqdn)
+                    .or_insert(vec![])
+                    .push(additional_record.clone());
             }
 
             // Did we receive an answer?
@@ -201,17 +191,19 @@ impl DnsResolver {
                 for answer_record in response.answer_records.iter() {
                     let mut cache = self.cache.borrow_mut();
                     let fqdn = FullyQualifiedDomainName(answer_record.name.clone());
-                    cache.entry(fqdn).or_insert(vec![]).push(answer_record.clone());
+                    cache
+                        .entry(fqdn)
+                        .or_insert(vec![])
+                        .push(answer_record.clone());
                 }
 
                 // And return the first answer
                 return Some(
-                    response
-                        .answer_records[0]
+                    response.answer_records[0]
                         .record_data
                         .as_ref()
                         .unwrap()
-                        .clone()
+                        .clone(),
                 );
             }
 
@@ -223,29 +215,32 @@ impl DnsResolver {
             // The server we just queried will tell us who the authority is for the next component of the domain name
             // Pick the first authority that the server mentioned
             if response.authority_records.len() == 0 {
-                debug!("\t\tNo authority records returned, question: {question}, response: {response}");
+                debug!(
+                    "\t\tNo authority records returned, question: {question}, response: {response}"
+                );
                 return None;
             }
 
             let authority_nameservers: Vec<FullyQualifiedDomainName> = response
                 .authority_records
                 .iter()
-                .filter_map(|authority_record|{
-                    match authority_record.record_data.as_ref() {
-                        Some(record_data) => {
-                            match record_data {
-                                DnsRecordData::NameServer(authority_name) => Some(authority_name.clone()),
-                                _ => None,
+                .filter_map(
+                    |authority_record| match authority_record.record_data.as_ref() {
+                        Some(record_data) => match record_data {
+                            DnsRecordData::NameServer(authority_name) => {
+                                Some(authority_name.clone())
                             }
-                        }
+                            _ => None,
+                        },
                         None => None,
-                    }
-                }).collect();
+                    },
+                )
+                .collect();
             match self.select_and_resolve_nameserver_from_pool(authority_nameservers) {
                 Some(ns_record_data) => match ns_record_data {
                     DnsRecordData::A(ipv4_addr) => {
                         server_addr = Self::dns_socket_for_ipv4(ipv4_addr);
-                    },
+                    }
                     _ => panic!("We can only resolve nameservers via A records for now"),
                 },
                 None => {
@@ -264,7 +259,9 @@ impl DnsResolver {
         // First, check whether any NS is already in the cache
         for nameserver in nameservers.iter() {
             debug!("\t\tAttempting to read info from cache for nameserver {nameserver}...");
-            if let Some(name_server_record_data) = self.get_record_from_cache_for_recursive_resolution(&nameserver) {
+            if let Some(name_server_record_data) =
+                self.get_record_from_cache_for_recursive_resolution(&nameserver)
+            {
                 info!("\t\tResolved NS {nameserver} from cache: {name_server_record_data:?}");
                 return Some(name_server_record_data.clone());
             }
@@ -272,7 +269,9 @@ impl DnsResolver {
         // Next, try to resolve any NS by reaching out
         for nameserver in nameservers.iter() {
             info!("\t\tRecursively resolving NS {nameserver}...");
-            if let Some(name_server_record_data) = self.resolve_question(&DnsRecord::new_question_a(&nameserver.0)) {
+            if let Some(name_server_record_data) =
+                self.resolve_question(&DnsRecord::new_question_a(&nameserver.0))
+            {
                 return Some(name_server_record_data.clone());
             }
         }
@@ -285,13 +284,9 @@ impl DnsResolver {
 pub(crate) fn resolve_one_record(
     resolver: &DnsResolver,
     fqdn: &str,
-    record_type: DnsRecordType
+    record_type: DnsRecordType,
 ) -> (DnsRecord, Option<DnsRecordData>) {
-    let question = DnsRecord::new_question(
-        fqdn,
-        record_type,
-        DnsRecordClass::Internet
-    );
+    let question = DnsRecord::new_question(fqdn, record_type, DnsRecordClass::Internet);
     let data = resolver.resolve_question(&question);
     info!("Resolved \"{fqdn}\": {data:?}");
     (question, data)
