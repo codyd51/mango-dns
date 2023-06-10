@@ -3,7 +3,7 @@ use log::{debug, info};
 use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType};
 use crate::packet_header::{DnsPacketHeader, PacketDirection, ResponseFields};
 use crate::packet_header_layout::DnsOpcode;
-use crate::packet_parser::read_packet_to_buffer;
+use crate::packet_parser::DnsPacketParser;
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
 use crate::resolver::{DnsResolver, resolve_one_record};
 

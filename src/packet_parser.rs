@@ -11,23 +11,23 @@ use crate::packet_header_layout::DnsPacketHeaderRaw;
 /// 'High-level' representation of a packet
 #[derive(Debug)]
 pub(crate) struct DnsPacket {
-    header: DnsPacketHeader,
-    question_records: Vec<DnsRecord>,
-    answer_records: Vec<DnsRecord>,
-    authority_records: Vec<DnsRecord>,
-    additional_records: Vec<DnsRecord>,
+    pub(crate) header: DnsPacketHeader,
+    pub(crate) question_records: Vec<DnsRecord>,
+    pub(crate) answer_records: Vec<DnsRecord>,
+    pub(crate) authority_records: Vec<DnsRecord>,
+    pub(crate) additional_records: Vec<DnsRecord>,
 }
 
 impl DnsPacket {
     pub fn new(
-        header: &DnsPacketHeader,
+        header: DnsPacketHeader,
         question_records: Vec<DnsRecord>,
         answer_records: Vec<DnsRecord>,
         authority_records: Vec<DnsRecord>,
         additional_records: Vec<DnsRecord>,
     ) -> Self {
         Self {
-            header: header.clone(),
+            header,
             question_records,
             answer_records,
             authority_records,
@@ -58,13 +58,12 @@ impl Display for DnsPacket {
     }
 }
 
-
-pub(crate) struct DnsQueryParser<'a> {
+pub(crate) struct DnsPacketBodyParser<'a> {
     body: &'a [u8],
     cursor: usize,
 }
 
-impl<'a> DnsQueryParser<'a> {
+impl<'a> DnsPacketBodyParser<'a> {
     fn new(
         body: &'a [u8],
     ) -> Self {
@@ -252,50 +251,48 @@ impl<'a> DnsQueryParser<'a> {
             record_data
         )
     }
+}
 
-    pub(crate) fn parse_response(&mut self, header: &DnsPacketHeader) -> DnsPacket {
+pub(crate) struct DnsPacketParser;
+
+impl DnsPacketParser {
+    pub(crate) fn parse_packet_buffer(packet_buffer: &[u8]) -> DnsPacket {
+        let (header_data, body_data) = packet_buffer.split_at(DnsPacketHeaderRaw::HEADER_SIZE);
+        let header_raw = unsafe {
+            &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
+        };
+        let header = DnsPacketHeader::from(header_raw);
+        let mut body_parser = DnsPacketBodyParser::new(body_data);
+
         // First, parse the questions
         let mut question_records = vec![];
         for _ in 0..header.question_count {
-            let question = self.parse_question();
+            let question = body_parser.parse_question();
             question_records.push(question);
         }
 
         let mut answer_records = vec![];
         for _ in 0..header.answer_count {
-            let answer_record = self.parse_record();
+            let answer_record = body_parser.parse_record();
             answer_records.push(answer_record);
         }
 
         // Parse the authoritative records
         let mut authority_records = vec![];
         for _ in 0..header.authority_count {
-            let authority_record = self.parse_record();
+            let authority_record = body_parser.parse_record();
             authority_records.push(authority_record);
         }
 
         // Parse additional records
         let mut additional_records = vec![];
         for _ in 0..header.additional_record_count {
-            let additional_record = self.parse_record();
+            let additional_record = body_parser.parse_record();
             additional_records.push(additional_record);
         }
 
         DnsPacket::new(header, question_records, answer_records, authority_records, additional_records)
     }
-}
-
-pub(crate) fn read_packet_to_buffer<'a>(socket: &UdpSocket, buffer: &'a mut [u8]) -> (SocketAddr, DnsPacketHeader, DnsQueryParser<'a>) {
-    let (packet_size, src) = socket.recv_from(buffer).unwrap();
-    let packet_data = &buffer[..packet_size];
-
-    let (header_data, body_data) = packet_data.split_at(DnsPacketHeaderRaw::HEADER_SIZE);
-    let header_raw = unsafe {
-        &*(header_data.as_ptr() as *const DnsPacketHeaderRaw)
-    };
-    let header = DnsPacketHeader::from(header_raw);
-    let body_parser = DnsQueryParser::new(body_data);
-    (src, header, body_parser)
 }
 
 #[cfg(test)]

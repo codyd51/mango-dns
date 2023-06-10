@@ -7,7 +7,7 @@ use rand::prelude::*;
 use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordType, FullyQualifiedDomainName};
 use crate::packet_header::{DnsPacketHeader, PacketDirection};
 use crate::packet_header_layout::DnsOpcode;
-use crate::packet_parser::read_packet_to_buffer;
+use crate::packet_parser::{DnsPacket, DnsPacketParser};
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
 
 pub(crate) struct DnsResolver {
@@ -38,11 +38,10 @@ impl DnsResolver {
     }
 
     fn dns_socket_for_ipv4(ip: Ipv4Addr) -> SocketAddr {
-        format!("{ip}:53").parse().unwrap()
+        SocketAddr::new(IpAddr::V4(ip), 53)
     }
 
     fn dns_socket_for_ipv6(ip: Ipv6Addr) -> SocketAddr {
-        //format!("[{ip}]:53").parse().unwrap()
         SocketAddr::new(IpAddr::V6(ip), 53)
     }
 
@@ -51,25 +50,28 @@ impl DnsResolver {
         Self::dns_socket_for_ipv4(server_ip.parse().unwrap())
     }
 
-    fn await_and_parse_response(socket: &UdpSocket, transaction_id: u16) -> (DnsPacketHeader, DnsResponse) {
+    fn await_and_parse_response(socket: &UdpSocket, transaction_id: u16) -> io::Result<DnsPacket> {
         // Await the response
-        let mut response_buffer = [0; 1500];
-        let (_src, header, mut body) = read_packet_to_buffer(&socket, &mut response_buffer);
+        let mut response_buffer = vec![0; 1500];
+        info!("Awaiting response from {socket:?} for transaction ID {transaction_id:X}");
+        let (packet_size, src) = socket.recv_from(&mut response_buffer)?;
+        let packet_data = &response_buffer[..packet_size];
+        let packet = DnsPacketParser::parse_packet_buffer(&response_buffer);
+        let packet_header = &packet.header;
 
-        debug!("Got response from {socket:?}:");
-        debug!("{header}");
+        info!("Received response from {socket:?} for transaction ID {transaction_id:X}:");
+        debug!("{packet_header}");
 
         // Ensure it was the response we were expecting
         // TODO(PT): We'll need some kind of event-driven model to handle interleaved responses
-        let received_transaction_id = header.identifier as u16;
+        let received_transaction_id = packet_header.identifier as u16;
         assert_eq!(received_transaction_id, transaction_id, "TODO: Received a response for a different transaction. Expected: {transaction_id}, received {received_transaction_id}");
 
-        let response = body.parse_response(&header);
-        (header, response)
+        Ok(packet)
     }
 
-    fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsRecord) -> DnsResponse {
-        debug!("Connecting to: {dest:?}");
+    fn send_question_and_await_response(&self, dest: &SocketAddr, question: &DnsRecord) -> Option<DnsPacket> {
+        info!("Connecting to: {dest:?}");
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         socket.connect(dest).unwrap();
 
@@ -202,6 +204,8 @@ impl DnsResolver {
                     debug!("\t\tAttempting to read authority info from cache for {authority_name}...");
                     let name_server_record_data = self.get_record_from_cache_for_recursive_resolution(&authority_name).unwrap_or_else(|| {
                         info!("\t\tCouldn't find info for NS {authority_name} in cache, will recurse...");
+                        // TODO(PT): Handle when this fails!
+                        // DnsRecord[name=partners.wg.spotify.com, A, None]
                         self.resolve_question(&DnsRecord::new_question_a(&authority_name.0)).unwrap()
                     });
 
