@@ -182,15 +182,7 @@ impl<'a> DnsPacketBodyParser<'a> {
         (0..16).map(|_| self.parse_u8() as u8).collect::<Vec<u8>>().try_into().unwrap()
     }
 
-    fn parse_question(&mut self) -> DnsRecord {
-        DnsRecord::new_question(
-            &self.parse_name(),
-            self.parse_record_type(),
-            self.parse_record_class(),
-        )
-    }
-
-    fn parse_record(&mut self) -> DnsRecord {
+    fn parse_record(&mut self, packet_record_type: DnsPacketRecordType) -> DnsRecord {
         let name = self.parse_name();
         let record_type = self.parse_record_type();
 
@@ -206,6 +198,16 @@ impl<'a> DnsPacketBodyParser<'a> {
         }
 
         let record_class = self.parse_record_class();
+
+        // Question records stop here
+        if packet_record_type == DnsPacketRecordType::QuestionRecord {
+            return DnsRecord::new_question(
+                &name,
+                record_type,
+                record_class,
+            )
+        }
+
         let ttl = self.parse_ttl();
         let data_length = self.parse_u16();
         let record_data = match record_type {
@@ -267,27 +269,27 @@ impl DnsPacketParser {
         // First, parse the questions
         let mut question_records = vec![];
         for _ in 0..header.question_count {
-            let question = body_parser.parse_question();
+            let question = body_parser.parse_record(DnsPacketRecordType::QuestionRecord);
             question_records.push(question);
         }
 
         let mut answer_records = vec![];
         for _ in 0..header.answer_count {
-            let answer_record = body_parser.parse_record();
+            let answer_record = body_parser.parse_record(DnsPacketRecordType::AnswerRecord);
             answer_records.push(answer_record);
         }
 
         // Parse the authoritative records
         let mut authority_records = vec![];
         for _ in 0..header.authority_count {
-            let authority_record = body_parser.parse_record();
+            let authority_record = body_parser.parse_record(DnsPacketRecordType::AuthorityRecord);
             authority_records.push(authority_record);
         }
 
         // Parse additional records
         let mut additional_records = vec![];
         for _ in 0..header.additional_record_count {
-            let additional_record = body_parser.parse_record();
+            let additional_record = body_parser.parse_record(DnsPacketRecordType::AdditionalRecord);
             additional_records.push(additional_record);
         }
 
