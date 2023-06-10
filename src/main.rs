@@ -18,59 +18,34 @@ mod resolver;
 mod packet_header;
 
 /// Useful for testing
-/*
-fn send_one_packet(
+async fn send_one_packet(
     resolver: &DnsResolver,
     socket: &UdpSocket,
 ) {
-    let (question, response_record_data) = resolve_one_record(&resolver, "www.axleos.com", DnsRecordType::AAAA);
-    let response_record = DnsRecord::new(
-        &question.name.clone(),
-        response_record_data.clone().into(),
-        DnsRecordClass::Internet,
-        Some(DnsRecordTtl(300)),
-        Some(response_record_data),
+    let (question, response_record_data) = resolve_one_record(&resolver, "fake.axleos.com", DnsRecordType::AAAA);
+    let raw_header = DnsPacketWriter::new_raw_header(
+        &DnsPacketWriterParams::new_query_response(
+            0x1234,
+            DnsPacketResponseCode::NxDomain,
+        ),
+        1,
+        0,
+        0,
+        0,
     );
-    let params = DnsPacketWriterParams::new(
-        0x1234 as u16,
-        DnsOpcode::Query,
-        PacketDirection::Response(
-            ResponseFields::new(
-                true,
-                false,
-                0
-            )
-        )
-    );
-    let response_packet = DnsPacketWriter::new_packet_from_records(
-        params,
-        vec![
-            (DnsPacketRecordType::QuestionRecord, &question),
-            (DnsPacketRecordType::AnswerRecord, &response_record)
-        ]
+    let header = DnsPacketHeader::from(&raw_header);
+    let response = generate_response_packet_from_question_and_response_record(
+        &header, &question, response_record_data
     );
     let resp_addr = socket.local_addr().unwrap();
-    socket.send_to(&response_packet, &resp_addr).unwrap();
+    socket.send_to(&response, &resp_addr).await.unwrap();
 }
-*/
 
 fn generate_response_packet_from_question_and_response_record(
     question_header: &DnsPacketHeader,
     question: &DnsRecord,
     response_record_data: Option<DnsRecordData>,
 ) -> Vec<u8> {
-    let params = DnsPacketWriterParams::new(
-        question_header.identifier as u16,
-        DnsOpcode::Query,
-        PacketDirection::Response(
-            ResponseFields::new(
-                true,
-                false,
-                0
-            )
-        )
-    );
-
     if let Some(response_record_data) = response_record_data {
         let response_record = DnsRecord::new(
             &question.name.clone(),
@@ -81,7 +56,10 @@ fn generate_response_packet_from_question_and_response_record(
         );
         info!("\tQuestion{question} => Answer {response_record}");
         DnsPacketWriter::new_packet_from_records(
-            params,
+            DnsPacketWriterParams::new_query_response(
+                question_header.identifier,
+                DnsPacketResponseCode::Success,
+            ),
             vec![
                 (DnsPacketRecordType::QuestionRecord, question),
                 (DnsPacketRecordType::AnswerRecord, &response_record),
@@ -91,7 +69,10 @@ fn generate_response_packet_from_question_and_response_record(
     else {
         info!("\tQuestion{question} => NXDOMAIN");
         DnsPacketWriter::new_packet_from_records(
-            params,
+            DnsPacketWriterParams::new_query_response(
+                question_header.identifier,
+                DnsPacketResponseCode::NxDomain,
+            ),
             vec![(DnsPacketRecordType::QuestionRecord, question)]
         )
     }
@@ -101,8 +82,17 @@ fn generate_response_packet_from_question_and_response_record(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::new().filter_level(log::LevelFilter::Error).init();
 
-    //let resolver = DnsResolver::new();
     let socket = UdpSocket::bind("127.0.0.1:53").await?;
+    /*
+    async fn send_one_packet(
+        resolver: &DnsResolver,
+        socket: &UdpSocket,
+    ) {
+    */
+    /*
+    send_one_packet(&DnsResolver::new(), &socket).await;
+    loop {};
+    */
 
     let r = Arc::new(socket);
     let (tx, rx) = async_channel::unbounded();
