@@ -1,5 +1,8 @@
-use std::net::UdpSocket;
-use log::{debug, info};
+use log::{debug, error, info};
+use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
+use std::{io, net::SocketAddr, sync::Arc};
+use async_channel::Receiver;
 use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType};
 use crate::packet_header::{DnsPacketHeader, PacketDirection, ResponseFields};
 use crate::packet_header_layout::DnsOpcode;
@@ -15,11 +18,12 @@ mod resolver;
 mod packet_header;
 
 /// Useful for testing
+/*
 fn send_one_packet(
     resolver: &DnsResolver,
     socket: &UdpSocket,
 ) {
-    let (question, response_record_data) = resolve_one_record(&resolver, "axleos.com", DnsRecordType::AAAA);
+    let (question, response_record_data) = resolve_one_record(&resolver, "www.axleos.com", DnsRecordType::AAAA);
     let response_record = DnsRecord::new(
         &question.name.clone(),
         response_record_data.clone().into(),
@@ -48,6 +52,7 @@ fn send_one_packet(
     let resp_addr = socket.local_addr().unwrap();
     socket.send_to(&response_packet, &resp_addr).unwrap();
 }
+*/
 
 fn generate_response_packet_from_question_and_response_record(
     question_header: &DnsPacketHeader,
@@ -92,43 +97,65 @@ fn generate_response_packet_from_question_and_response_record(
     }
 }
 
-fn main() -> std::io::Result<()> {
-    env_logger::Builder::new().filter_level(log::LevelFilter::Info).init();
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::Builder::new().filter_level(log::LevelFilter::Error).init();
 
-    let resolver = DnsResolver::new();
-    let socket = UdpSocket::bind("127.0.0.1:53")?;
+    //let resolver = DnsResolver::new();
+    let socket = UdpSocket::bind("127.0.0.1:53").await?;
 
-    loop {
-        let mut packet_buffer = [0; 1500];
-        let (src, header, mut body_parser) = read_packet_to_buffer(&socket, &mut packet_buffer);
-        match header.opcode {
-            DnsOpcode::Query => {
-                info!("Handling DNS query ID 0x{:x}", header.identifier);
-                // TODO(PT): Rename this to DnsBody/parse_body?
-                let body = body_parser.parse_response(&header);
-                for (i, question) in body.question_records.iter().enumerate() {
-                    // Ignore questions about anything other than A/AAAA records
-                    if ![DnsRecordType::A, DnsRecordType::AAAA].contains(&question.record_type) {
-                        debug!("\tDropping query for unsupported record type {:?}", question.record_type);
-                        continue;
+    let r = Arc::new(socket);
+    let (tx, rx) = async_channel::unbounded();
+
+    for i in 0..8 {
+        let rx_clone: Receiver<(Vec<u8>, SocketAddr)> = rx.clone();
+        let socket_clone = r.clone();
+        tokio::spawn(async move {
+            let task_local_resolver = DnsResolver::new();
+            while let Ok((bytes, addr)) = rx_clone.recv().await {
+                let packet = DnsPacketParser::parse_packet_buffer(&bytes);
+                let packet_header = &packet.header;
+                match packet_header.opcode {
+                    DnsOpcode::Query => {
+                        info!("Handling DNS query ID 0x{:x}", packet_header.identifier);
+                        for (i, question) in packet.question_records.iter().enumerate() {
+                            // Ignore questions about anything other than A/AAAA records
+                            if ![DnsRecordType::A, DnsRecordType::AAAA].contains(&question.record_type) {
+                                debug!("\tDropping query for unsupported record type {:?}", question.record_type);
+                                continue;
+                            }
+
+                            //info!("\tResolving question #{i}: {question}");
+                            error!("{i}: Resolve {question}");
+                            let response = task_local_resolver.resolve_question(question);
+                            match &response {
+                                None => error!("\tNXDOMAIN"),
+                                Some(a) => error!("\t{a:?}"),
+                            }
+
+                            let response_packet = generate_response_packet_from_question_and_response_record(
+                                &packet_header,
+                                question,
+                                response
+                            );
+
+                            socket_clone.send_to(&response_packet, &addr).await.unwrap();
+                        }
                     }
-
-                    info!("\tResolving question #{i}: {question}");
-                    let response = resolver.resolve_question(question);
-
-                    let response_packet = generate_response_packet_from_question_and_response_record(
-                        &header,
-                        question,
-                        response
-                    );
-
-                    socket.send_to(&response_packet, &src).unwrap();
+                    _ => {
+                        debug!("Ignoring non-query packet");
+                        //todo!()
+                    }
                 }
             }
-            _ => {
-                debug!("Ignoring non-query packet");
-                //todo!()
-            }
-        }
+        });
+    }
+
+    // TODO(PT): MAX_DNS_UDP_PACKET_SIZE
+    let mut buf = [0; 512];
+    loop {
+        let (len, addr) = r.recv_from(&mut buf).await?;
+        //println!("{:?} bytes received from {:?}", len, addr);
+        tx.send((buf[..len].to_vec(), addr)).await.unwrap();
     }
 }
