@@ -8,7 +8,7 @@ use log::{debug, error, info};
 use rand::prelude::*;
 use crate::dns_record::{DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordType, FullyQualifiedDomainName};
 use crate::packet_header::{DnsPacketHeader, PacketDirection};
-use crate::packet_header_layout::DnsOpcode;
+use crate::packet_header_layout::{DnsOpcode, DnsPacketResponseCode};
 use crate::packet_parser::{DnsPacket, DnsPacketParser};
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
 
@@ -213,6 +213,11 @@ impl DnsResolver {
                         .unwrap()
                         .clone()
                 );
+            }
+
+            if response.header.response_code == DnsPacketResponseCode::NxDomain {
+                error!("Header said NXDomain! {response}");
+                return None;
             }
 
             // The server we just queried will tell us who the authority is for the next component of the domain name
