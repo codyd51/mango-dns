@@ -180,7 +180,12 @@ impl DnsResolver {
 
         loop {
             let response = self.send_question_and_await_response(&server_addr, question);
-            debug!("\t\tResponse:\n{response}");
+            if let None = response {
+                info!("Failed to find response, so will send NXDOMAIN");
+                return None;
+            }
+            let response = response.unwrap();
+            info!("\t\tResponse:\n{response}");
 
             // First, add the additional records to our cache, as we might need them to resolve the next destination
             for additional_record in response.additional_records.iter() {
