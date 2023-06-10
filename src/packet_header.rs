@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) struct ResponseFields {
     is_authority: bool,
     is_recursion_available: bool,
@@ -22,13 +22,13 @@ impl ResponseFields {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) enum PacketDirection {
     Query,
     Response(ResponseFields),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct DnsPacketHeader {
     pub(crate) identifier: usize,
     pub(crate) direction: PacketDirection,

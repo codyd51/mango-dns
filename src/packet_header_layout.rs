@@ -1,7 +1,7 @@
 use std::mem;
 use bitvec::prelude::*;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) enum DnsOpcode {
     Query = 0,
     Status = 2,

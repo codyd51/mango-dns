@@ -10,53 +10,6 @@ use crate::packet_header_layout::DnsOpcode;
 use crate::packet_parser::read_packet_to_buffer;
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
 
-/// 'High-level' representation of a response from another server
-#[derive(Debug)]
-pub(crate) struct DnsResponse {
-    pub(crate) question_records: Vec<DnsRecord>,
-    answer_records: Vec<DnsRecord>,
-    authority_records: Vec<DnsRecord>,
-    additional_records: Vec<DnsRecord>,
-}
-
-impl DnsResponse {
-    pub(crate) fn new(
-        question_records: Vec<DnsRecord>,
-        answer_records: Vec<DnsRecord>,
-        authority_records: Vec<DnsRecord>,
-        additional_records: Vec<DnsRecord>,
-    ) -> Self {
-        Self {
-            question_records,
-            answer_records,
-            authority_records,
-            additional_records,
-        }
-    }
-}
-
-impl Display for DnsResponse {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        for (i, question) in self.question_records.iter().enumerate() {
-            writeln!(f, "\tQuestion #{i}: {question}")?;
-        }
-
-        for (i, answer) in self.answer_records.iter().enumerate() {
-            writeln!(f, "\tAnswer #{i}: {answer}")?;
-        }
-
-        for (i, authority_record) in self.authority_records.iter().enumerate() {
-            writeln!(f, "\tAuthority record #{i}: {authority_record}")?;
-        }
-
-        for (i, additional_record) in self.additional_records.iter().enumerate() {
-            writeln!(f, "\tAdditional record #{i}: {additional_record}")?;
-        }
-
-        Ok(())
-    }
-}
-
 pub(crate) struct DnsResolver {
     cache: RefCell<HashMap<FullyQualifiedDomainName, Vec<DnsRecord>>>,
 }

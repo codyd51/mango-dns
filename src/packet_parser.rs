@@ -1,11 +1,63 @@
-use std::mem;
+use std::{io, mem};
+use std::fmt::{Display, Formatter};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use bitvec::prelude::*;
 use log::{debug, trace};
 use crate::dns_record::{DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType, FullyQualifiedDomainName, StartOfAuthorityRecordData};
 use crate::packet_header::DnsPacketHeader;
 use crate::packet_header_layout::DnsPacketHeaderRaw;
-use crate::resolver::DnsResponse;
+
+
+/// 'High-level' representation of a packet
+#[derive(Debug)]
+pub(crate) struct DnsPacket {
+    header: DnsPacketHeader,
+    question_records: Vec<DnsRecord>,
+    answer_records: Vec<DnsRecord>,
+    authority_records: Vec<DnsRecord>,
+    additional_records: Vec<DnsRecord>,
+}
+
+impl DnsPacket {
+    pub fn new(
+        header: &DnsPacketHeader,
+        question_records: Vec<DnsRecord>,
+        answer_records: Vec<DnsRecord>,
+        authority_records: Vec<DnsRecord>,
+        additional_records: Vec<DnsRecord>,
+    ) -> Self {
+        Self {
+            header: header.clone(),
+            question_records,
+            answer_records,
+            authority_records,
+            additional_records,
+        }
+    }
+}
+
+impl Display for DnsPacket {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (i, question) in self.question_records.iter().enumerate() {
+            writeln!(f, "\tQuestion #{i}: {question}")?;
+        }
+
+        for (i, answer) in self.answer_records.iter().enumerate() {
+            writeln!(f, "\tAnswer #{i}: {answer}")?;
+        }
+
+        for (i, authority_record) in self.authority_records.iter().enumerate() {
+            writeln!(f, "\tAuthority record #{i}: {authority_record}")?;
+        }
+
+        for (i, additional_record) in self.additional_records.iter().enumerate() {
+            writeln!(f, "\tAdditional record #{i}: {additional_record}")?;
+        }
+
+        Ok(())
+    }
+}
+
 
 pub(crate) struct DnsQueryParser<'a> {
     body: &'a [u8],
@@ -201,7 +253,7 @@ impl<'a> DnsQueryParser<'a> {
         )
     }
 
-    pub(crate) fn parse_response(&mut self, header: &DnsPacketHeader) -> DnsResponse {
+    pub(crate) fn parse_response(&mut self, header: &DnsPacketHeader) -> DnsPacket {
         // First, parse the questions
         let mut question_records = vec![];
         for _ in 0..header.question_count {
@@ -229,7 +281,7 @@ impl<'a> DnsQueryParser<'a> {
             additional_records.push(additional_record);
         }
 
-        DnsResponse::new(question_records, answer_records, authority_records, additional_records)
+        DnsPacket::new(header, question_records, answer_records, authority_records, additional_records)
     }
 }
 
