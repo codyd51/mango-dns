@@ -133,6 +133,30 @@ impl EDNSOptRecordData {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) struct HttpsRecordData {
+    svc_priority: usize,
+    target_name: String,
+    svc_param_key: usize,
+    supported_protocols: Vec<String>,
+}
+
+impl HttpsRecordData {
+    pub(crate) fn new(
+        svc_priority: usize,
+        target_name: String,
+        svc_param_key: usize,
+        supported_protocols: Vec<String>,
+    ) -> Self {
+        Self {
+            svc_priority,
+            target_name,
+            svc_param_key,
+            supported_protocols,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DnsRecordData {
     A(Ipv4Addr),
     AAAA(Ipv6Addr),
@@ -141,6 +165,7 @@ pub(crate) enum DnsRecordData {
     StartOfAuthority(StartOfAuthorityRecordData),
     EDNSOpt(EDNSOptRecordData),
     Pointer(FullyQualifiedDomainName),
+    Https(HttpsRecordData),
 }
 
 impl From<&DnsRecordData> for DnsRecordType {
@@ -153,6 +178,7 @@ impl From<&DnsRecordData> for DnsRecordType {
             DnsRecordData::StartOfAuthority(_) => DnsRecordType::StartOfAuthority,
             DnsRecordData::EDNSOpt(_) => DnsRecordType::EDNSOpt,
             DnsRecordData::Pointer(_) => DnsRecordType::Pointer,
+            DnsRecordData::Https(_) => DnsRecordType::Https,
         }
     }
 }
@@ -229,6 +255,7 @@ impl Display for DnsRecord {
                 DnsRecordData::StartOfAuthority(soa) => Some(format!("{soa:?}")),
                 DnsRecordData::EDNSOpt(edns_opt) => Some(format!("{edns_opt:?}")),
                 DnsRecordData::Pointer(fqdn) => Some(format!("{fqdn}")),
+                DnsRecordData::Https(https) => Some(format!("{https:?}")),
             },
         };
         let name = &self.name;

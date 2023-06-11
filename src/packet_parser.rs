@@ -1,11 +1,11 @@
 use crate::dns_record::{
     DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType,
-    EDNSOptRecordData, FullyQualifiedDomainName, StartOfAuthorityRecordData,
+    EDNSOptRecordData, FullyQualifiedDomainName, HttpsRecordData, StartOfAuthorityRecordData,
 };
 use crate::packet_header::DnsPacketHeader;
 use crate::packet_header_layout::DnsPacketHeaderRaw;
 use bitvec::prelude::*;
-use log::{debug, trace};
+use log::{debug, error, trace};
 use std::fmt::{Display, Formatter};
 use std::mem;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -263,6 +263,29 @@ impl<'a> DnsPacketBodyParser<'a> {
             DnsRecordType::Pointer => Some(DnsRecordData::Pointer(FullyQualifiedDomainName(
                 self.parse_name(),
             ))),
+            DnsRecordType::Https => {
+                let svc_priority = self.parse_u16();
+                let target_name = self.parse_name();
+                let svc_param_key = self.parse_u16();
+                // PT: Represents ALPN, but it's not important to model it fully yet
+                assert_eq!(svc_param_key, 1);
+                let svc_param_value_length = self.parse_u16();
+                let mut cursor = 0;
+                let mut supported_protocols = vec![];
+                while cursor < svc_param_value_length {
+                    let protocol_code_len = self.parse_u8();
+                    cursor += mem::size_of::<u8>();
+                    let protocol_code = self.parse_bytes(protocol_code_len);
+                    cursor += protocol_code_len;
+                    supported_protocols.push(String::from_utf8(protocol_code).unwrap());
+                }
+                Some(DnsRecordData::Https(HttpsRecordData::new(
+                    svc_priority,
+                    target_name,
+                    svc_param_key,
+                    supported_protocols,
+                )))
+            }
             _ => todo!("Unhandled record type {record_type:?}"),
         };
         DnsRecord::new(&name, record_type, Some(record_class), ttl, record_data)
@@ -320,7 +343,8 @@ impl DnsPacketParser {
 #[cfg(test)]
 mod test {
     use crate::dns_record::{
-        DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordType, EDNSOptRecordData,
+        DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType, EDNSOptRecordData,
+        HttpsRecordData,
     };
     use crate::packet_header::{DnsPacketHeader, PacketDirection};
     use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw};
@@ -372,6 +396,35 @@ mod test {
                     0,
                     0,
                     &[]
+                )))
+            )
+        );
+    }
+
+    #[test]
+    fn parse_https_record() {
+        let packet_data = vec![
+            0x21, 0xe9, 0x84, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x03, 0x77,
+            0x77, 0x77, 0x06, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x03, 0x63, 0x6f, 0x6d, 0x00,
+            0x00, 0x41, 0x00, 0x01, 0xc0, 0x0c, 0x00, 0x41, 0x00, 0x01, 0x00, 0x00, 0x54, 0x60,
+            0x00, 0x0d, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x06, 0x02, 0x68, 0x32, 0x02, 0x68,
+            0x33,
+        ];
+
+        let result = DnsPacketParser::parse_packet_buffer(&packet_data);
+        assert_eq!(result.answer_records.len(), 1);
+        assert_eq!(
+            result.answer_records[0],
+            DnsRecord::new(
+                &"www.google.com",
+                DnsRecordType::Https,
+                Some(DnsRecordClass::Internet),
+                Some(DnsRecordTtl(21600)),
+                Some(DnsRecordData::Https(HttpsRecordData::new(
+                    1,
+                    "".to_string(),
+                    1,
+                    vec!["h2".to_string(), "h3".to_string()]
                 )))
             )
         );
