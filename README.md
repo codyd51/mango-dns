@@ -21,7 +21,7 @@ mango does most of the usual fun stuff expected of a recursive DNS resolver:
 
 ### Packet parsing
 
-I use mango as my DNS resolver, so all the traffic that I see on my home network is covered by mango. This includes extensions to DNS, such as [DNS-SD](http://www.dns-sd.org), [EDNS](https://en.wikipedia.org/wiki/Extension_Mechanisms_for_DNS), and [SVCB/HTTPS] records.
+I use mango as my DNS resolver, so all the traffic that I see on my home network is covered by mango. This includes extensions to DNS, such as [DNS-SD](http://www.dns-sd.org), [EDNS](https://en.wikipedia.org/wiki/Extension_Mechanisms_for_DNS), and [SVCB/HTTPS](https://datatracker.ietf.org/doc/draft-ietf-dnsop-svcb-https/11/?include_text=1) records.
 
 mango supports parsing a variety of record types:
 
