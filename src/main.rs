@@ -5,7 +5,7 @@ use crate::packet_header::DnsPacketHeader;
 use crate::packet_header_layout::{DnsOpcode, DnsPacketResponseCode};
 use crate::packet_parser::DnsPacketParser;
 use crate::packet_writer::{DnsPacketWriter, DnsPacketWriterParams};
-use crate::resolver::{resolve_one_record, DnsResolver};
+use crate::resolver::{resolve_one_record, DnsQuestionResolutionResult, DnsResolver};
 use async_channel::Receiver;
 use log::{debug, error, info};
 use std::{net::SocketAddr, sync::Arc};
@@ -30,7 +30,7 @@ async fn send_one_packet(resolver: &DnsResolver, socket: &UdpSocket) {
         0,
     );
     let header = DnsPacketHeader::from(&raw_header);
-    let response = generate_response_packet_from_question_and_response_record(
+    let response = generate_response_packet_from_question_and_resolution_result(
         &header,
         &question,
         response_record_data,
@@ -39,39 +39,43 @@ async fn send_one_packet(resolver: &DnsResolver, socket: &UdpSocket) {
     socket.send_to(&response, &resp_addr).await.unwrap();
 }
 
-fn generate_response_packet_from_question_and_response_record(
+fn generate_response_packet_from_question_and_resolution_result(
     question_header: &DnsPacketHeader,
     question: &DnsRecord,
-    response_record_data: Option<DnsRecordData>,
+    result: DnsQuestionResolutionResult,
 ) -> Vec<u8> {
-    if let Some(response_record_data) = response_record_data {
-        let response_record = DnsRecord::new(
-            &question.name.clone(),
-            response_record_data.clone().into(),
-            DnsRecordClass::Internet,
-            Some(DnsRecordTtl(300)),
-            Some(response_record_data),
-        );
-        info!("\tQuestion{question} => Answer {response_record}");
-        DnsPacketWriter::new_packet_from_records(
-            DnsPacketWriterParams::new_query_response(
-                question_header.identifier,
-                DnsPacketResponseCode::Success,
-            ),
-            vec![
-                (DnsPacketRecordType::QuestionRecord, question),
-                (DnsPacketRecordType::AnswerRecord, &response_record),
-            ],
-        )
-    } else {
-        info!("\tQuestion{question} => NXDOMAIN");
-        DnsPacketWriter::new_packet_from_records(
-            DnsPacketWriterParams::new_query_response(
-                question_header.identifier,
-                DnsPacketResponseCode::NxDomain,
-            ),
-            vec![(DnsPacketRecordType::QuestionRecord, question)],
-        )
+    match result {
+        DnsQuestionResolutionResult::Answer(answer_record_data) => {
+            let response_record = DnsRecord::new(
+                &question.name.clone(),
+                (&answer_record_data).into(),
+                Some(DnsRecordClass::Internet),
+                Some(DnsRecordTtl(300)),
+                Some(answer_record_data),
+            );
+            info!("\tQuestion{question} => Answer {response_record}");
+            DnsPacketWriter::new_packet_from_records(
+                DnsPacketWriterParams::new_query_response(
+                    question_header.identifier,
+                    DnsPacketResponseCode::Success,
+                ),
+                vec![
+                    (DnsPacketRecordType::QuestionRecord, question),
+                    (DnsPacketRecordType::AnswerRecord, &response_record),
+                ],
+            )
+        }
+        failure => {
+            info!("\tQuestion{question} => {failure:#?}");
+            // Return NXDOMAIN for every failure type
+            DnsPacketWriter::new_packet_from_records(
+                DnsPacketWriterParams::new_query_response(
+                    question_header.identifier,
+                    DnsPacketResponseCode::NxDomain,
+                ),
+                vec![(DnsPacketRecordType::QuestionRecord, question)],
+            )
+        }
     }
 }
 
@@ -118,10 +122,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             let response_packet =
-                                generate_response_packet_from_question_and_response_record(
+                                generate_response_packet_from_question_and_resolution_result(
                                     &packet_header,
                                     question,
-                                    response,
+                                    result,
                                 );
 
                             socket_clone.send_to(&response_packet, &addr).await.unwrap();

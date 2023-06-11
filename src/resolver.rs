@@ -10,9 +10,19 @@ use log::{debug, error, info};
 use rand::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
 use std::{io, thread};
+
+#[derive(Debug)]
+pub(crate) enum DnsQuestionResolutionResult {
+    CannotResolveRecordType,
+    CannotReachIntermediaryServer,
+    CannotIdentifyIntermediaryServer,
+    NoDomain,
+    Answer(DnsRecordData),
+}
 
 pub(crate) struct DnsResolver {
     cache: RefCell<HashMap<FullyQualifiedDomainName, Vec<DnsRecord>>>,
@@ -150,14 +160,14 @@ impl DnsResolver {
         }
     }
 
-    pub(crate) fn resolve_question(&self, question: &DnsRecord) -> Option<DnsRecordData> {
-        // First, check whether the answer is in the cache
+    pub(crate) fn resolve_question(&self, question: &DnsRecord) -> DnsQuestionResolutionResult {
+        // Then, check whether the answer is already in the cache
         let requested_fqdn = FullyQualifiedDomainName(question.name.clone());
         if let Some(cached_record) = self
             .get_record_from_cache_for_returning_response(&requested_fqdn, &question.record_type)
         {
             debug!("Serving question from cache: {requested_fqdn}");
-            return Some(cached_record);
+            return DnsQuestionResolutionResult::Answer(cached_record);
         }
 
         // Start off with querying a root DNS server
@@ -167,7 +177,7 @@ impl DnsResolver {
             let response = self.send_question_and_await_response(&server_addr, question);
             if let None = response {
                 info!("Failed to find response, so will send NXDOMAIN");
-                return None;
+                return DnsQuestionResolutionResult::CannotReachIntermediaryServer;
             }
             let response = response.unwrap();
             info!("\t\tResponse:\n{response}");
@@ -181,7 +191,7 @@ impl DnsResolver {
                 // Return the first answer
                 // TODO(PT): We could return all answer records
                 debug!("\t\tFound answer records! {:#?}", response.answer_records);
-                return Some(
+                return DnsQuestionResolutionResult::Answer(
                     response.answer_records[0]
                         .record_data
                         .as_ref()
@@ -192,7 +202,7 @@ impl DnsResolver {
 
             if response.header.response_code == DnsPacketResponseCode::NxDomain {
                 error!("Header said NXDomain! {response}");
-                return None;
+                return DnsQuestionResolutionResult::NoDomain;
             }
 
             // The server we just queried will tell us who the authority is for the next component of the domain name
@@ -201,22 +211,22 @@ impl DnsResolver {
                 debug!(
                     "\t\tNo authority records returned, question: {question}, response: {response}"
                 );
-                return None;
+                return DnsQuestionResolutionResult::CannotIdentifyIntermediaryServer;
             }
 
             let authority_nameservers =
                 Self::get_nameserver_names_from_records(&response.authority_records);
             match self.select_and_resolve_nameserver_from_pool(authority_nameservers) {
-                Some(ns_record_data) => match ns_record_data {
+                DnsQuestionResolutionResult::Answer(ns_record_data) => match ns_record_data {
                     DnsRecordData::A(ipv4_addr) => {
                         server_addr = Self::dns_socket_for_ipv4(ipv4_addr);
                     }
                     _ => panic!("We can only resolve nameservers via A records for now"),
                 },
-                None => {
+                failure => {
                     // Failed to resolve a nameserver for the provided query
-                    info!("Failed to find a nameserver to resolve question {question}");
-                    return None;
+                    info!("Failed to connect to a nameserver to resolve question {question}: {failure:?}");
+                    return failure;
                 }
             }
         }
