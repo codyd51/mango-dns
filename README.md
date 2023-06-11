@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="spread.svg">
+  <img src="spread2.png">
 </div>
 
 mango supports the common DNS record types:
