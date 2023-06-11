@@ -105,7 +105,7 @@ impl DnsPacketWriter {
             // Record type
             writer.write_u16(record.record_type as u16);
             // Record class
-            writer.write_u16(record.record_class as u16);
+            writer.write_u16(record.record_class.unwrap() as u16);
 
             if let Some(ttl) = record.record_ttl {
                 // TTL
@@ -216,7 +216,7 @@ mod test {
         let answer_record = DnsRecord::new(
             &"axleos.com",
             DnsRecordType::A,
-            DnsRecordClass::Internet,
+            Some(DnsRecordClass::Internet),
             Some(DnsRecordTtl(300)),
             Some(a_record),
         );

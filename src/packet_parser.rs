@@ -1,6 +1,6 @@
 use crate::dns_record::{
     DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType,
-    FullyQualifiedDomainName, StartOfAuthorityRecordData,
+    EDNSOptRecordData, FullyQualifiedDomainName, StartOfAuthorityRecordData,
 };
 use crate::packet_header::DnsPacketHeader;
 use crate::packet_header_layout::DnsPacketHeaderRaw;
@@ -193,19 +193,42 @@ impl<'a> DnsPacketBodyParser<'a> {
             .unwrap()
     }
 
+    fn parse_bytes(&mut self, count: usize) -> Vec<u8> {
+        let mut out = vec![];
+        for _ in 0..count {
+            out.push(self.parse_u8() as u8);
+        }
+        out
+    }
+
     fn parse_record(&mut self, packet_record_type: DnsPacketRecordType) -> DnsRecord {
         let name = self.parse_name();
         let record_type = self.parse_record_type();
 
-        if record_type == DnsRecordType::EDNSOpt {
-            return DnsRecord::new(
-                &name,
-                record_type,
-                // TODO(PT): Not valid for EDNSOpt, but I'm not bothering to properly model this for now
-                DnsRecordClass::Internet,
-                None,
-                None,
-            );
+        // EDNSOpt record format diverges here
+        match record_type {
+            DnsRecordType::EDNSOpt => {
+                let udp_payload_size = self.parse_u16();
+                let extended_opcode = self.parse_u8();
+                let version = self.parse_u8();
+                let flags = self.parse_u16();
+                let options_data_len = self.parse_u16();
+                let options_data = self.parse_bytes(options_data_len);
+                return DnsRecord::new(
+                    &name,
+                    record_type,
+                    None,
+                    None,
+                    Some(DnsRecordData::EDNSOpt(EDNSOptRecordData::new(
+                        udp_payload_size,
+                        extended_opcode,
+                        version,
+                        flags,
+                        &options_data,
+                    ))),
+                );
+            }
+            _ => {} // Continue parsing down below
         }
 
         let record_class = self.parse_record_class();
@@ -215,8 +238,8 @@ impl<'a> DnsPacketBodyParser<'a> {
             return DnsRecord::new_question(&name, record_type, record_class);
         }
 
-        let ttl = self.parse_ttl();
-        let data_length = self.parse_u16();
+        let ttl = Some(self.parse_ttl());
+        let _data_length = self.parse_u16();
         let record_data = match record_type {
             DnsRecordType::A => Some(DnsRecordData::A(Ipv4Addr::from(self.parse_ipv4()))),
             DnsRecordType::AAAA => Some(DnsRecordData::AAAA(Ipv6Addr::from(self.parse_ipv6()))),
@@ -300,8 +323,12 @@ impl DnsPacketParser {
 
 #[cfg(test)]
 mod test {
+    use crate::dns_record::{
+        DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordType, EDNSOptRecordData,
+    };
     use crate::packet_header::{DnsPacketHeader, PacketDirection};
     use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw};
+    use crate::packet_parser::DnsPacketParser;
     use std::net::Ipv4Addr;
 
     #[test]
@@ -322,5 +349,35 @@ mod test {
         assert_eq!(header.answer_count, 0);
         assert_eq!(header.authority_count, 0);
         assert_eq!(header.additional_record_count, 1);
+    }
+
+    #[test]
+    fn parse_edns_record() {
+        let packet_data = vec![
+            0xcd, 0x9e, 0x01, 0x20, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x07, 0x70,
+            0x61, 0x67, 0x65, 0x61, 0x64, 0x32, 0x11, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x73,
+            0x79, 0x6e, 0x64, 0x69, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x03, 0x63, 0x6f, 0x6d,
+            0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x29, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+
+        let result = DnsPacketParser::parse_packet_buffer(&packet_data);
+        assert_eq!(result.additional_records.len(), 1);
+        assert_eq!(
+            result.additional_records[0],
+            DnsRecord::new(
+                &"",
+                DnsRecordType::EDNSOpt,
+                None,
+                None,
+                Some(DnsRecordData::EDNSOpt(EDNSOptRecordData::new(
+                    4096,
+                    0,
+                    0,
+                    0,
+                    &[]
+                )))
+            )
+        );
     }
 }

@@ -82,16 +82,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let socket = UdpSocket::bind("127.0.0.1:53").await?;
-    /*
-    async fn send_one_packet(
-        resolver: &DnsResolver,
-        socket: &UdpSocket,
-    ) {
-    */
-    /*
-    send_one_packet(&DnsResolver::new(), &socket).await;
-    loop {};
-    */
 
     let r = Arc::new(socket);
     let (tx, rx) = async_channel::unbounded();
