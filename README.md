@@ -2,6 +2,8 @@
   <img src="spread.png">
 </div>
 
+<br/>
+
 mango-dns is a recursive DNS resolver. The major areas of functionality include:
 
 * Event loop
@@ -18,6 +20,18 @@ mango does most of the usual fun stuff expected of a recursive DNS resolver:
 * Parse and generate DNS packets and many record types
 * Cache records and respond from the cache (both when responding to queries and when recursing)
 * Send `NXDOMAIN`/`SOA` records in response to unreachable queries
+
+### Build and run
+
+mango should run on any reasonable target that exposes the POSIX socket and thread APIs.
+
+```bash
+$ cargo run --release
+# macOS specific:
+# In another shell, configure the system
+# to target mango's local DNS server
+$ networksetup -setdnsservers Wi-Fi 127.0.0.1
+```
 
 ### Packet parsing
 
@@ -158,5 +172,5 @@ impl DnsResolver {
 }
 ```
 
-## License
+### License
 MIT license. 
