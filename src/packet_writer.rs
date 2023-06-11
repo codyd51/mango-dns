@@ -37,6 +37,13 @@ pub(crate) struct DnsPacketWriter {
 }
 
 impl DnsPacketWriter {
+    pub(crate) fn new() -> Self {
+        Self {
+            output_packet: vec![],
+            cursor: 0,
+        }
+    }
+
     pub(crate) fn new_raw_header(
         params: &DnsPacketWriterParams,
         question_record_count: u16,
@@ -100,37 +107,66 @@ impl DnsPacketWriter {
         writer.cursor += header_bytes_len;
 
         for (_record_type, record) in record_types_and_records.iter() {
-            // Record name
-            writer.write_name(&record.name);
-            // Record type
-            writer.write_u16(record.record_type as u16);
-            // Record class
-            writer.write_u16(record.record_class.unwrap() as u16);
-
-            if let Some(ttl) = record.record_ttl {
-                // TTL
-                writer.write_u32(ttl.0 as _);
-            }
-            if let Some(record_data) = &record.record_data {
-                match &record_data {
-                    DnsRecordData::A(ipv4_addr) => {
-                        writer.write_ipv4_addr(*ipv4_addr);
-                    }
-                    DnsRecordData::CanonicalName(fqdn) => {
-                        let mut name_buffer = vec![];
-                        let name_len = Self::write_name_to(&fqdn.0, &mut name_buffer);
-                        writer.write_u16(name_len as _);
-                        writer.write_buf(&name_buffer);
-                    }
-                    DnsRecordData::AAAA(ipv6_addr) => {
-                        writer.write_ipv6_addr(*ipv6_addr);
-                    }
-                    record_type => todo!("Cannot write record type {record_type:?}"),
-                }
-            }
+            writer.write_record(record);
         }
 
         writer.output_packet
+    }
+
+    fn write_record(&mut self, record: &DnsRecord) {
+        // Record name
+        self.write_name(Some(&record.name));
+        // Record type
+        self.write_u16(record.record_type as u16);
+        // Record class
+        self.write_u16(record.record_class.unwrap() as u16);
+
+        if let Some(ttl) = record.record_ttl {
+            // TTL
+            self.write_u32(ttl.0 as _);
+        }
+        if let Some(record_data) = &record.record_data {
+            match &record_data {
+                DnsRecordData::A(ipv4_addr) => {
+                    self.write_ipv4_addr(*ipv4_addr);
+                }
+                DnsRecordData::CanonicalName(fqdn) => {
+                    let mut name_buffer = vec![];
+                    let name_len = Self::write_name_to(Some(&fqdn.0), &mut name_buffer);
+                    self.write_u16(name_len as _);
+                    self.write_buf(&name_buffer);
+                }
+                DnsRecordData::AAAA(ipv6_addr) => {
+                    self.write_ipv6_addr(*ipv6_addr);
+                }
+                DnsRecordData::Https(https_data) => {
+                    // Write it all to a buf and get the data len
+                    let mut buf = vec![];
+
+                    Self::write_u16_to(https_data.svc_priority as _, &mut buf);
+                    Self::write_name_to(https_data.target_name.as_deref(), &mut buf);
+                    Self::write_u16_to(https_data.svc_param_key as _, &mut buf);
+
+                    let mut proto_names_len = 0;
+                    for proto_name in https_data.supported_protocols.iter() {
+                        // 1 byte for the len
+                        proto_names_len += 1;
+                        proto_names_len += proto_name.as_bytes().len();
+                    }
+                    Self::write_u16_to(proto_names_len as _, &mut buf);
+
+                    for proto_name in https_data.supported_protocols.iter() {
+                        let proto_name_bytes = proto_name.as_bytes();
+                        Self::write_u8_to(proto_name_bytes.len() as _, &mut buf);
+                        Self::write_buf_to(proto_name_bytes, &mut buf);
+                    }
+
+                    self.write_u16(buf.len() as _);
+                    self.write_buf(&buf);
+                }
+                record_type => todo!("Cannot write record type {record_type:?}"),
+            }
+        }
     }
 
     fn write_u8(&mut self, val: u8) {
@@ -143,7 +179,13 @@ impl DnsPacketWriter {
     }
 
     fn write_u16(&mut self, val: u16) {
-        self.write_buf(&val.to_be_bytes())
+        self.cursor += Self::write_u16_to(val, &mut self.output_packet);
+    }
+
+    fn write_u16_to(val: u16, out: &mut Vec<u8>) -> usize {
+        let mut bytes = val.to_be_bytes().to_vec();
+        out.append(&mut bytes);
+        bytes.len()
     }
 
     fn write_u32(&mut self, val: u32) {
@@ -151,30 +193,46 @@ impl DnsPacketWriter {
     }
 
     fn write_buf(&mut self, buf: &[u8]) {
-        for &b in buf.iter() {
-            self.write_u8(b);
-        }
+        self.cursor += Self::write_buf_to(buf, &mut self.output_packet);
     }
 
-    fn write_name(&mut self, name: &str) {
+    fn write_buf_to(src_buf: &[u8], dest_buf: &mut Vec<u8>) -> usize {
+        let count = src_buf.len();
+        for &b in src_buf.iter() {
+            Self::write_u8_to(b, dest_buf)
+        }
+        count
+    }
+
+    fn write_name(&mut self, name: Option<&str>) {
         self.cursor += Self::write_name_to(name, &mut self.output_packet);
     }
 
-    fn write_name_to(name: &str, out: &mut Vec<u8>) -> usize {
-        let mut len = 0;
-        for label in name.split(".") {
-            // Write label length, then the label data
-            Self::write_u8_to(label.len() as _, out);
-            len += 1;
-            for ch in label.chars() {
-                Self::write_u8_to(ch as _, out);
+    fn write_name_to(name: Option<&str>, out: &mut Vec<u8>) -> usize {
+        // Null name?
+        match name {
+            None => {
+                // Null name
+                Self::write_u8_to(0, out);
+                1
+            }
+            Some(name) => {
+                let mut len = 0;
+                for label in name.split(".") {
+                    // Write label length, then the label data
+                    Self::write_u8_to(label.len() as _, out);
+                    len += 1;
+                    for ch in label.chars() {
+                        Self::write_u8_to(ch as _, out);
+                        len += 1;
+                    }
+                }
+                // Null byte to terminate labels
+                Self::write_u8_to('\0' as _, out);
                 len += 1;
+                len
             }
         }
-        // Null byte to terminate labels
-        Self::write_u8_to('\0' as _, out);
-        len += 1;
-        len
     }
 
     fn write_ipv4_addr_from_u32(&mut self, addr: u32) {
@@ -200,6 +258,7 @@ impl DnsPacketWriter {
 mod test {
     use crate::dns_record::{
         DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType,
+        HttpsRecordData,
     };
     use crate::packet_header::{PacketDirection, ResponseFields};
     use crate::packet_header_layout::{DnsOpcode, DnsPacketResponseCode};
@@ -293,5 +352,31 @@ mod test {
                 115,
             ]
         )
+    }
+
+    #[test]
+    fn write_https_record() {
+        let mut writer = DnsPacketWriter::new();
+        let record = DnsRecord::new(
+            &"www.google.com",
+            DnsRecordType::Https,
+            Some(DnsRecordClass::Internet),
+            Some(DnsRecordTtl(21600)),
+            Some(DnsRecordData::Https(HttpsRecordData::new(
+                1,
+                None,
+                1,
+                vec!["h2".to_string(), "h3".to_string()],
+            ))),
+        );
+        writer.write_record(&record);
+        assert_eq!(
+            writer.output_packet,
+            vec![
+                0x03, 0x77, 0x77, 0x77, 0x06, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x03, 0x63, 0x6f,
+                0x6d, 0x00, 0x00, 0x41, 0x00, 0x01, 0x00, 0x00, 0x54, 0x60, 0x00, 0x0d, 0x00, 0x01,
+                0x00, 0x00, 0x01, 0x00, 0x06, 0x02, 0x68, 0x32, 0x02, 0x68, 0x33,
+            ]
+        );
     }
 }
