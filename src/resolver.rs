@@ -115,8 +115,16 @@ impl DnsResolver {
                 Ok(packet) => return Some(packet),
                 Err(ref err) => {
                     info!("Error reading from the socket: {}", err.kind());
-                    thread::sleep(Duration::from_millis(100 * (attempt + 1)));
-                    info!("Slept, will try again");
+                    match err.kind() {
+                        ErrorKind::WouldBlock => {
+                            info!("Socket would block, will wait a bit then try reading again");
+                            thread::sleep(Duration::from_millis(100 * (attempt + 1)));
+                        }
+                        _ => {
+                            info!("Unhandled error type, will stop trying to read from the socket");
+                            break;
+                        }
+                    }
                 }
             }
         }
