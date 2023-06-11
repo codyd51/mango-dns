@@ -134,16 +134,16 @@ impl EDNSOptRecordData {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct HttpsRecordData {
-    svc_priority: usize,
-    target_name: String,
-    svc_param_key: usize,
-    supported_protocols: Vec<String>,
+    pub(crate) svc_priority: usize,
+    pub(crate) target_name: Option<String>,
+    pub(crate) svc_param_key: usize,
+    pub(crate) supported_protocols: Vec<String>,
 }
 
 impl HttpsRecordData {
     pub(crate) fn new(
         svc_priority: usize,
-        target_name: String,
+        target_name: Option<String>,
         svc_param_key: usize,
         supported_protocols: Vec<String>,
     ) -> Self {

@@ -210,7 +210,6 @@ mod test {
     fn write_response() {
         let transaction_id = 0x669f;
         let ttl = 300_u32;
-        //let mut output_packet = DnsPacketWriter::new_answer(transaction_id, "axleos.com", ttl as _);
 
         let a_record = DnsRecordData::A(Ipv4Addr::new(172, 67, 189, 115));
         let answer_record = DnsRecord::new(

@@ -1,6 +1,7 @@
 use crate::dns_record::{
-    DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType,
-    EDNSOptRecordData, FullyQualifiedDomainName, HttpsRecordData, StartOfAuthorityRecordData,
+    DelegationSignerRecordData, DnsPacketRecordType, DnsRecord, DnsRecordClass, DnsRecordData,
+    DnsRecordTtl, DnsRecordType, EDNSOptRecordData, FullyQualifiedDomainName, HttpsRecordData,
+    StartOfAuthorityRecordData,
 };
 use crate::packet_header::DnsPacketHeader;
 use crate::packet_header_layout::DnsPacketHeaderRaw;
@@ -112,7 +113,7 @@ impl<'a> DnsPacketBodyParser<'a> {
         out
     }
 
-    fn parse_name_at(&mut self, cursor: &mut usize) -> String {
+    fn parse_name_at(&mut self, cursor: &mut usize) -> Option<String> {
         trace!("Parsing name at {}...", self.cursor);
         // The DNS body compression scheme allows a name to be represented as:
         // - A pointer
@@ -139,7 +140,7 @@ impl<'a> DnsPacketBodyParser<'a> {
                     label_offset_into_packet as usize - DnsPacketHeaderRaw::HEADER_SIZE;
                 let mut pointer_cursor = label_offset_into_body;
                 // Recurse and read a name from the pointer
-                let name_from_pointer = self.parse_name_at(&mut pointer_cursor);
+                let name_from_pointer = self.parse_name_at(&mut pointer_cursor).unwrap();
                 debug!("Got name from pointer: {name_from_pointer}");
                 name_components.push(name_from_pointer);
                 // Pointers are always the end of a name
@@ -157,10 +158,15 @@ impl<'a> DnsPacketBodyParser<'a> {
             }
         }
 
-        name_components.join(".")
+        // Null name?
+        if name_components.len() == 0 {
+            None
+        } else {
+            Some(name_components.join("."))
+        }
     }
 
-    fn parse_name(&mut self) -> String {
+    fn parse_name(&mut self) -> Option<String> {
         let mut cursor = self.cursor;
         let out = self.parse_name_at(&mut cursor);
         self.cursor = cursor;
@@ -202,7 +208,9 @@ impl<'a> DnsPacketBodyParser<'a> {
     }
 
     fn parse_record(&mut self, packet_record_type: DnsPacketRecordType) -> DnsRecord {
-        let name = self.parse_name();
+        let name = self.parse_name().unwrap_or_else(|| {
+            panic!("Failed to find name for record type {packet_record_type:?}")
+        });
         let record_type = self.parse_record_type();
 
         // EDNSOpt record format diverges here
@@ -244,15 +252,15 @@ impl<'a> DnsPacketBodyParser<'a> {
             DnsRecordType::A => Some(DnsRecordData::A(Ipv4Addr::from(self.parse_ipv4()))),
             DnsRecordType::AAAA => Some(DnsRecordData::AAAA(Ipv6Addr::from(self.parse_ipv6()))),
             DnsRecordType::NameServer => Some(DnsRecordData::NameServer(FullyQualifiedDomainName(
-                self.parse_name(),
+                self.parse_name().unwrap(),
             ))),
             DnsRecordType::CanonicalName => Some(DnsRecordData::CanonicalName(
-                FullyQualifiedDomainName(self.parse_name()),
+                FullyQualifiedDomainName(self.parse_name().unwrap()),
             )),
             DnsRecordType::StartOfAuthority => Some(DnsRecordData::StartOfAuthority(
                 StartOfAuthorityRecordData::new(
-                    FullyQualifiedDomainName(self.parse_name()),
-                    FullyQualifiedDomainName(self.parse_name()),
+                    FullyQualifiedDomainName(self.parse_name().unwrap()),
+                    FullyQualifiedDomainName(self.parse_name().unwrap()),
                     self.parse_u32(),
                     self.parse_u32(),
                     self.parse_u32(),
@@ -261,7 +269,7 @@ impl<'a> DnsPacketBodyParser<'a> {
                 ),
             )),
             DnsRecordType::Pointer => Some(DnsRecordData::Pointer(FullyQualifiedDomainName(
-                self.parse_name(),
+                self.parse_name().unwrap(),
             ))),
             DnsRecordType::Https => {
                 let svc_priority = self.parse_u16();
@@ -422,7 +430,7 @@ mod test {
                 Some(DnsRecordTtl(21600)),
                 Some(DnsRecordData::Https(HttpsRecordData::new(
                     1,
-                    "".to_string(),
+                    None,
                     1,
                     vec!["h2".to_string(), "h3".to_string()]
                 )))
