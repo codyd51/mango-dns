@@ -217,20 +217,25 @@ impl Display for DnsRecord {
             DnsRecordType::EDNSOpt => "OPT",
             DnsRecordType::Text => "TXT",
         };
-        let record_data = match &self.record_data {
-            None => "None".to_string(),
+        let maybe_record_data_as_string = match &self.record_data {
+            None => None,
             Some(record_data) => match record_data {
-                DnsRecordData::A(ipv4_addr) => format!("{ipv4_addr}"),
-                DnsRecordData::AAAA(ipv6_addr) => format!("{ipv6_addr}"),
-                DnsRecordData::NameServer(fqdn) => format!("{fqdn}"),
-                DnsRecordData::CanonicalName(fqdn) => format!("{fqdn}"),
-                DnsRecordData::StartOfAuthority(soa) => format!("{soa:?}"),
+                DnsRecordData::A(ipv4_addr) => Some(format!("{ipv4_addr}")),
+                DnsRecordData::AAAA(ipv6_addr) => Some(format!("{ipv6_addr}")),
+                DnsRecordData::NameServer(fqdn) => Some(format!("{fqdn}")),
+                DnsRecordData::CanonicalName(fqdn) => Some(format!("{fqdn}")),
+                DnsRecordData::StartOfAuthority(soa) => Some(format!("{soa:?}")),
+                DnsRecordData::EDNSOpt(edns_opt) => Some(format!("{edns_opt:?}")),
+                DnsRecordData::Pointer(fqdn) => Some(format!("{fqdn}")),
             },
         };
-        write!(
-            f,
-            "DnsRecord[name={}, {record_type}, {record_data}]",
-            self.name,
-        )
+        let name = &self.name;
+        match maybe_record_data_as_string {
+            None => write!(f, "DnsRecord[{name}, {record_type}]"),
+            Some(record_data_as_string) => write!(
+                f,
+                "DnsRecord[{name}, {record_type}, {record_data_as_string}]"
+            ),
+        }
     }
 }
