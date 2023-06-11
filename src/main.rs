@@ -102,24 +102,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     DnsOpcode::Query => {
                         info!("Handling DNS query ID 0x{:x}", packet_header.identifier);
                         for (i, question) in packet.question_records.iter().enumerate() {
-                            // Ignore questions about anything other than A/AAAA records
-                            if ![DnsRecordType::A, DnsRecordType::AAAA]
-                                .contains(&question.record_type)
-                            {
-                                debug!(
-                                    "\tDropping query for unsupported record type {:?}",
-                                    question.record_type
-                                );
-                                continue;
-                            }
-
                             //info!("\tResolving question #{i}: {question}");
                             error!("{i}: Resolve {question}");
-                            let response = task_local_resolver.resolve_question(question);
-                            match &response {
-                                None => error!("\tNXDOMAIN"),
-                                Some(a) => error!("\t{a:?}"),
-                            }
+                            let result = task_local_resolver.resolve_question(question);
+                            error!("\tResult for {question}: {result:?}");
 
                             let response_packet =
                                 generate_response_packet_from_question_and_resolution_result(

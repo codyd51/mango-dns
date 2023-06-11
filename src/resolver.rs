@@ -45,6 +45,13 @@ impl DnsResolver {
         "202.12.27.33",
     ];
 
+    const SUPPORTED_RECORD_TYPES_FOR_RESOLUTION: [DnsRecordType; 4] = [
+        DnsRecordType::A,
+        DnsRecordType::AAAA,
+        DnsRecordType::Pointer,
+        DnsRecordType::Https,
+    ];
+
     pub(crate) fn new() -> Self {
         Self {
             cache: RefCell::new(HashMap::new()),
@@ -160,7 +167,20 @@ impl DnsResolver {
         }
     }
 
+    fn is_record_type_supported_for_resolution(record_type: &DnsRecordType) -> bool {
+        Self::SUPPORTED_RECORD_TYPES_FOR_RESOLUTION.contains(record_type)
+    }
+
     pub(crate) fn resolve_question(&self, question: &DnsRecord) -> DnsQuestionResolutionResult {
+        // First, check whether we support resolving this record type
+        if !Self::is_record_type_supported_for_resolution(&question.record_type) {
+            debug!(
+                "\tDropping query for unsupported record type {:?}",
+                question.record_type
+            );
+            return DnsQuestionResolutionResult::CannotResolveRecordType;
+        }
+
         // Then, check whether the answer is already in the cache
         let requested_fqdn = FullyQualifiedDomainName(question.name.clone());
         if let Some(cached_record) = self
@@ -248,7 +268,7 @@ impl DnsResolver {
     fn select_and_resolve_nameserver_from_pool(
         &self,
         nameservers: Vec<FullyQualifiedDomainName>,
-    ) -> Option<DnsRecordData> {
+    ) -> DnsQuestionResolutionResult {
         // First, check whether any NS is already in the cache
         for nameserver in nameservers.iter() {
             debug!("\t\tAttempting to read info from cache for nameserver {nameserver}...");
@@ -256,20 +276,21 @@ impl DnsResolver {
                 self.get_record_from_cache_for_recursive_resolution(&nameserver)
             {
                 info!("\t\tResolved NS {nameserver} from cache: {name_server_record_data:?}");
-                return Some(name_server_record_data.clone());
+                return DnsQuestionResolutionResult::Answer(name_server_record_data.clone());
             }
         }
         // Next, try to resolve any NS by reaching out
         for nameserver in nameservers.iter() {
             info!("\t\tRecursively resolving NS {nameserver}...");
-            if let Some(name_server_record_data) =
+            if let DnsQuestionResolutionResult::Answer(name_server_record_data) =
                 self.resolve_question(&DnsRecord::new_question_a(&nameserver.0))
             {
-                return Some(name_server_record_data.clone());
+                return DnsQuestionResolutionResult::Answer(name_server_record_data.clone());
             }
         }
         // Failed to resolve any nameserver
-        None
+        // Technically this is either "can't reach" or "can't identify", but either is fine
+        return DnsQuestionResolutionResult::CannotReachIntermediaryServer;
     }
 }
 
@@ -278,7 +299,7 @@ pub(crate) fn resolve_one_record(
     resolver: &DnsResolver,
     fqdn: &str,
     record_type: DnsRecordType,
-) -> (DnsRecord, Option<DnsRecordData>) {
+) -> (DnsRecord, DnsQuestionResolutionResult) {
     let question = DnsRecord::new_question(fqdn, record_type, DnsRecordClass::Internet);
     let data = resolver.resolve_question(&question);
     info!("Resolved \"{fqdn}\": {data:?}");

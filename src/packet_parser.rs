@@ -269,7 +269,7 @@ impl<'a> DnsPacketBodyParser<'a> {
                 None
             }
         };
-        DnsRecord::new(&name, record_type, record_class, Some(ttl), record_data)
+        DnsRecord::new(&name, record_type, Some(record_class), ttl, record_data)
     }
 }
 
