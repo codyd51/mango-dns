@@ -247,7 +247,7 @@ impl<'a> DnsPacketBodyParser<'a> {
         }
 
         let ttl = Some(self.parse_ttl());
-        let _data_length = self.parse_u16();
+        let data_length = self.parse_u16();
         let record_data = match record_type {
             DnsRecordType::A => Some(DnsRecordData::A(Ipv4Addr::from(self.parse_ipv4()))),
             DnsRecordType::AAAA => Some(DnsRecordData::AAAA(Ipv6Addr::from(self.parse_ipv6()))),
@@ -293,6 +293,18 @@ impl<'a> DnsPacketBodyParser<'a> {
                     svc_param_key,
                     supported_protocols,
                 )))
+            }
+            DnsRecordType::DelegationSigner => {
+                // Don't bother properly modelling all the semantics of these values yet
+                let key_id = self.parse_u16();
+                let algorithm = self.parse_u8();
+                let digest_type = self.parse_u8();
+                // The above parsed 4 bytes
+                let digest_byte_count = data_length - 4;
+                let digest = self.parse_bytes(digest_byte_count);
+                Some(DnsRecordData::DelegationSigner(
+                    DelegationSignerRecordData::new(key_id, algorithm, digest_type, digest),
+                ))
             }
             _ => todo!("Unhandled record type {record_type:?}"),
         };
@@ -351,8 +363,8 @@ impl DnsPacketParser {
 #[cfg(test)]
 mod test {
     use crate::dns_record::{
-        DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl, DnsRecordType, EDNSOptRecordData,
-        HttpsRecordData,
+        DelegationSignerRecordData, DnsRecord, DnsRecordClass, DnsRecordData, DnsRecordTtl,
+        DnsRecordType, EDNSOptRecordData, HttpsRecordData,
     };
     use crate::packet_header::{DnsPacketHeader, PacketDirection};
     use crate::packet_header_layout::{DnsOpcode, DnsPacketHeaderRaw};
@@ -434,6 +446,46 @@ mod test {
                     1,
                     vec!["h2".to_string(), "h3".to_string()]
                 )))
+            )
+        );
+    }
+
+    #[test]
+    fn parse_delegation_signer() {
+        let packet_data = vec![
+            0x24, 0x53, 0x80, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x6f,
+            0x6e, 0x65, 0x03, 0x6f, 0x6e, 0x65, 0x03, 0x6f, 0x6e, 0x65, 0x03, 0x6f, 0x6e, 0x65,
+            0x00, 0x00, 0x1c, 0x00, 0x01, 0xc0, 0x10, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x0e,
+            0x10, 0x00, 0x18, 0x04, 0x6a, 0x65, 0x61, 0x6e, 0x02, 0x6e, 0x73, 0x0a, 0x63, 0x6c,
+            0x6f, 0x75, 0x64, 0x66, 0x6c, 0x61, 0x72, 0x65, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0xc0,
+            0x10, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x0e, 0x10, 0x00, 0x07, 0x04, 0x66, 0x72,
+            0x65, 0x64, 0xc0, 0x32, 0xc0, 0x10, 0x00, 0x2b, 0x00, 0x01, 0x00, 0x00, 0x0e, 0x10,
+            0x00, 0x24, 0x09, 0x43, 0x0d, 0x02, 0x49, 0x9e, 0x09, 0x67, 0xfb, 0x04, 0xf5, 0x31,
+            0x20, 0x4c, 0x56, 0xf6, 0xe8, 0x86, 0x3f, 0xff, 0x7c, 0xce, 0xee, 0xd1, 0x46, 0x9e,
+            0x8f, 0x26, 0xd8, 0x5e, 0x2e, 0x42, 0x54, 0xdd, 0x0c, 0xbb,
+        ];
+
+        let result = DnsPacketParser::parse_packet_buffer(&packet_data);
+        assert_eq!(result.authority_records.len(), 3);
+        assert_eq!(
+            result.authority_records[2],
+            DnsRecord::new(
+                &"one.one.one",
+                DnsRecordType::DelegationSigner,
+                Some(DnsRecordClass::Internet),
+                Some(DnsRecordTtl(3600)),
+                Some(DnsRecordData::DelegationSigner(
+                    DelegationSignerRecordData::new(
+                        0x943,
+                        13,
+                        2,
+                        vec![
+                            0x49, 0x9e, 0x09, 0x67, 0xfb, 0x04, 0xf5, 0x31, 0x20, 0x4c, 0x56, 0xf6,
+                            0xe8, 0x86, 0x3f, 0xff, 0x7c, 0xce, 0xee, 0xd1, 0x46, 0x9e, 0x8f, 0x26,
+                            0xd8, 0x5e, 0x2e, 0x42, 0x54, 0xdd, 0x0c, 0xbb
+                        ]
+                    )
+                ))
             )
         );
     }

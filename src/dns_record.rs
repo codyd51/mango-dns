@@ -157,6 +157,30 @@ impl HttpsRecordData {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DelegationSignerRecordData {
+    key_id: usize,
+    algorithm: usize,
+    digest_size: usize,
+    digest: Vec<u8>,
+}
+
+impl DelegationSignerRecordData {
+    pub(crate) fn new(
+        key_id: usize,
+        algorithm: usize,
+        digest_size: usize,
+        digest: Vec<u8>,
+    ) -> Self {
+        Self {
+            key_id,
+            algorithm,
+            digest_size,
+            digest,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DnsRecordData {
     A(Ipv4Addr),
     AAAA(Ipv6Addr),
@@ -166,6 +190,7 @@ pub(crate) enum DnsRecordData {
     EDNSOpt(EDNSOptRecordData),
     Pointer(FullyQualifiedDomainName),
     Https(HttpsRecordData),
+    DelegationSigner(DelegationSignerRecordData),
 }
 
 impl From<&DnsRecordData> for DnsRecordType {
@@ -179,6 +204,7 @@ impl From<&DnsRecordData> for DnsRecordType {
             DnsRecordData::EDNSOpt(_) => DnsRecordType::EDNSOpt,
             DnsRecordData::Pointer(_) => DnsRecordType::Pointer,
             DnsRecordData::Https(_) => DnsRecordType::Https,
+            DnsRecordData::DelegationSigner(_) => DnsRecordType::DelegationSigner,
         }
     }
 }
@@ -256,6 +282,7 @@ impl Display for DnsRecord {
                 DnsRecordData::EDNSOpt(edns_opt) => Some(format!("{edns_opt:?}")),
                 DnsRecordData::Pointer(fqdn) => Some(format!("{fqdn}")),
                 DnsRecordData::Https(https) => Some(format!("{https:?}")),
+                DnsRecordData::DelegationSigner(ds) => Some(format!("{ds:?}")),
             },
         };
         let name = &self.name;
