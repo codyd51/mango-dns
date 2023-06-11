@@ -268,6 +268,9 @@ impl<'a> DnsPacketBodyParser<'a> {
                 }
                 None
             }
+            DnsRecordType::Pointer => Some(DnsRecordData::Pointer(FullyQualifiedDomainName(
+                self.parse_name(),
+            ))),
         };
         DnsRecord::new(&name, record_type, Some(record_class), ttl, record_data)
     }

@@ -140,6 +140,7 @@ pub(crate) enum DnsRecordData {
     CanonicalName(FullyQualifiedDomainName),
     StartOfAuthority(StartOfAuthorityRecordData),
     EDNSOpt(EDNSOptRecordData),
+    Pointer(FullyQualifiedDomainName),
 }
 
 impl From<&DnsRecordData> for DnsRecordType {
@@ -151,6 +152,7 @@ impl From<&DnsRecordData> for DnsRecordType {
             DnsRecordData::CanonicalName(_) => DnsRecordType::CanonicalName,
             DnsRecordData::StartOfAuthority(_) => DnsRecordType::StartOfAuthority,
             DnsRecordData::EDNSOpt(_) => DnsRecordType::EDNSOpt,
+            DnsRecordData::Pointer(_) => DnsRecordType::Pointer,
         }
     }
 }
