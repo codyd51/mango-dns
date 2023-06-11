@@ -115,7 +115,7 @@ impl DnsPacketWriter {
 
     fn write_record(&mut self, record: &DnsRecord) {
         // Record name
-        self.write_name(Some(&record.name));
+        self.write_name(record.name.as_deref());
         // Record type
         self.write_u16(record.record_type as u16);
         // Record class
@@ -272,7 +272,7 @@ mod test {
 
         let a_record = DnsRecordData::A(Ipv4Addr::new(172, 67, 189, 115));
         let answer_record = DnsRecord::new(
-            &"axleos.com",
+            Some("axleos.com"),
             DnsRecordType::A,
             Some(DnsRecordClass::Internet),
             Some(DnsRecordTtl(300)),
@@ -358,7 +358,7 @@ mod test {
     fn write_https_record() {
         let mut writer = DnsPacketWriter::new();
         let record = DnsRecord::new(
-            &"www.google.com",
+            Some("www.google.com"),
             DnsRecordType::Https,
             Some(DnsRecordClass::Internet),
             Some(DnsRecordTtl(21600)),

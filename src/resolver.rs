@@ -170,7 +170,7 @@ impl DnsResolver {
     fn add_records_to_cache(&self, records: &[DnsRecord]) {
         let mut cache = self.cache.borrow_mut();
         for record in records.iter() {
-            let fqdn = FullyQualifiedDomainName(record.name.clone());
+            let fqdn = FullyQualifiedDomainName(record.name.as_ref().unwrap().clone());
             cache.entry(fqdn).or_insert(vec![]).push(record.clone());
         }
     }
@@ -190,7 +190,7 @@ impl DnsResolver {
         }
 
         // Then, check whether the answer is already in the cache
-        let requested_fqdn = FullyQualifiedDomainName(question.name.clone());
+        let requested_fqdn = FullyQualifiedDomainName(question.name.as_ref().unwrap().clone());
         if let Some(cached_record) = self
             .get_record_from_cache_for_returning_response(&requested_fqdn, &question.record_type)
         {
@@ -308,7 +308,7 @@ pub(crate) fn resolve_one_record(
     fqdn: &str,
     record_type: DnsRecordType,
 ) -> (DnsRecord, DnsQuestionResolutionResult) {
-    let question = DnsRecord::new_question(fqdn, record_type, DnsRecordClass::Internet);
+    let question = DnsRecord::new_question(Some(fqdn), record_type, DnsRecordClass::Internet);
     let data = resolver.resolve_question(&question);
     info!("Resolved \"{fqdn}\": {data:?}");
     (question, data)

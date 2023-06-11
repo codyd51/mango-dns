@@ -47,7 +47,7 @@ fn generate_response_packet_from_question_and_resolution_result(
     match result {
         DnsQuestionResolutionResult::Answer(answer_record_data) => {
             let response_record = DnsRecord::new(
-                &question.name.clone(),
+                question.name.as_deref(),
                 (&answer_record_data).into(),
                 Some(DnsRecordClass::Internet),
                 Some(DnsRecordTtl(300)),

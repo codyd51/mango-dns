@@ -211,7 +211,8 @@ impl From<&DnsRecordData> for DnsRecordType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DnsRecord {
-    pub(crate) name: String,
+    // Often not set for EDNS records
+    pub(crate) name: Option<String>,
     pub(crate) record_type: DnsRecordType,
     // This field isn't valid for EDNS records
     pub(crate) record_class: Option<DnsRecordClass>,
@@ -222,14 +223,17 @@ pub(crate) struct DnsRecord {
 
 impl DnsRecord {
     pub(crate) fn new(
-        name: &str,
+        name: Option<&str>,
         record_type: DnsRecordType,
         record_class: Option<DnsRecordClass>,
         record_ttl: Option<DnsRecordTtl>,
         record_data: Option<DnsRecordData>,
     ) -> Self {
         Self {
-            name: name.to_string(),
+            name: match name {
+                None => None,
+                Some(name) => Some(name.to_string()),
+            },
             record_type,
             record_class,
             record_ttl,
@@ -238,12 +242,12 @@ impl DnsRecord {
     }
 
     pub(crate) fn new_question(
-        name: &str,
+        name: Option<&str>,
         record_type: DnsRecordType,
         record_class: DnsRecordClass,
     ) -> Self {
         Self {
-            name: name.to_string(),
+            name: Some(name.unwrap().to_string()),
             record_type,
             record_class: Some(record_class),
             record_ttl: None,
@@ -252,7 +256,7 @@ impl DnsRecord {
     }
 
     pub(crate) fn new_question_a(name: &str) -> Self {
-        Self::new_question(name, DnsRecordType::A, DnsRecordClass::Internet)
+        Self::new_question(Some(name), DnsRecordType::A, DnsRecordClass::Internet)
     }
 }
 
@@ -285,12 +289,16 @@ impl Display for DnsRecord {
                 DnsRecordData::DelegationSigner(ds) => Some(format!("{ds:?}")),
             },
         };
+        let name_str = match &self.name {
+            None => "".to_string(),
+            Some(name) => format!("{name}, "),
+        };
         let name = &self.name;
         match maybe_record_data_as_string {
-            None => write!(f, "DnsRecord[{name}, {record_type}]"),
+            None => write!(f, "DnsRecord[{name_str}{record_type}]"),
             Some(record_data_as_string) => write!(
                 f,
-                "DnsRecord[{name}, {record_type}, {record_data_as_string}]"
+                "DnsRecord[{name_str}{record_type}, {record_data_as_string}]"
             ),
         }
     }

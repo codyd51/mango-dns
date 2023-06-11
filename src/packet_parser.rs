@@ -208,9 +208,7 @@ impl<'a> DnsPacketBodyParser<'a> {
     }
 
     fn parse_record(&mut self, packet_record_type: DnsPacketRecordType) -> DnsRecord {
-        let name = self.parse_name().unwrap_or_else(|| {
-            panic!("Failed to find name for record type {packet_record_type:?}")
-        });
+        let name = self.parse_name();
         let record_type = self.parse_record_type();
 
         // EDNSOpt record format diverges here
@@ -223,7 +221,7 @@ impl<'a> DnsPacketBodyParser<'a> {
                 let options_data_len = self.parse_u16();
                 let options_data = self.parse_bytes(options_data_len);
                 return DnsRecord::new(
-                    &name,
+                    name.as_deref(),
                     record_type,
                     None,
                     None,
@@ -243,7 +241,7 @@ impl<'a> DnsPacketBodyParser<'a> {
 
         // Question records stop here
         if packet_record_type == DnsPacketRecordType::QuestionRecord {
-            return DnsRecord::new_question(&name, record_type, record_class);
+            return DnsRecord::new_question(name.as_deref(), record_type, record_class);
         }
 
         let ttl = Some(self.parse_ttl());
@@ -308,7 +306,13 @@ impl<'a> DnsPacketBodyParser<'a> {
             }
             _ => todo!("Unhandled record type {record_type:?}"),
         };
-        DnsRecord::new(&name, record_type, Some(record_class), ttl, record_data)
+        DnsRecord::new(
+            name.as_deref(),
+            record_type,
+            Some(record_class),
+            ttl,
+            record_data,
+        )
     }
 }
 
@@ -383,8 +387,8 @@ mod test {
         assert_eq!(header.direction, PacketDirection::Query);
         assert_eq!(header.opcode, DnsOpcode::Query);
         assert_eq!(header.is_truncated, false);
-        assert_eq!(header.is_recursion_desired, false);
-        assert_eq!(header.is_recursion_available, true);
+        assert_eq!(header.is_recursion_desired, true);
+        assert_eq!(header.is_recursion_available, false);
         assert_eq!(header.question_count, 1);
         assert_eq!(header.answer_count, 0);
         assert_eq!(header.authority_count, 0);
@@ -406,7 +410,7 @@ mod test {
         assert_eq!(
             result.additional_records[0],
             DnsRecord::new(
-                &"",
+                None,
                 DnsRecordType::EDNSOpt,
                 None,
                 None,
@@ -436,7 +440,7 @@ mod test {
         assert_eq!(
             result.answer_records[0],
             DnsRecord::new(
-                &"www.google.com",
+                Some("www.google.com"),
                 DnsRecordType::Https,
                 Some(DnsRecordClass::Internet),
                 Some(DnsRecordTtl(21600)),
@@ -470,7 +474,7 @@ mod test {
         assert_eq!(
             result.authority_records[2],
             DnsRecord::new(
-                &"one.one.one",
+                Some("one.one.one"),
                 DnsRecordType::DelegationSigner,
                 Some(DnsRecordClass::Internet),
                 Some(DnsRecordTtl(3600)),
