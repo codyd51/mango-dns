@@ -260,17 +260,10 @@ impl<'a> DnsPacketBodyParser<'a> {
                     self.parse_u32(),
                 ),
             )),
-            _ => {
-                // Skip past the bytes we're ignoring
-                debug!("Doing stub parsing of unhandled record type {record_type:?}");
-                for _ in 0..data_length {
-                    self.parse_u8();
-                }
-                None
-            }
             DnsRecordType::Pointer => Some(DnsRecordData::Pointer(FullyQualifiedDomainName(
                 self.parse_name(),
             ))),
+            _ => todo!("Unhandled record type {record_type:?}"),
         };
         DnsRecord::new(&name, record_type, Some(record_class), ttl, record_data)
     }
