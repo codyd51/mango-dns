@@ -9,7 +9,7 @@ mango-dns is a recursive DNS resolver. The major areas of functionality include:
 * Recursive resolution
 * Packet generation
 
-mango uses [tokio](https://github.com/tokio-rs/tokio) to help manage its event loop and distribute DNS queries. DNS parsing, resolution, and packet resolution, is implemented in-house. 
+mango uses [tokio](https://github.com/tokio-rs/tokio) to help manage its event loop, which distributes DNS queries and processes them concurrently. DNS parsing, resolution, and packet resolution, is implemented in-house. 
 
 mango does most of the usual fun stuff expected of a recursive DNS resolver:
 
