@@ -15,11 +15,11 @@ mango uses [tokio](https://github.com/tokio-rs/tokio) to help manage its event l
 
 mango does most of the usual fun stuff expected of a recursive DNS resolver:
 
-* Functionality is valid: the high-level stack (i.e. web browsing, etc.) works
-* Recursively resolve queries, starting from the root DNS servers
-* Parse and generate DNS packets and many record types
-* Cache records and respond from the cache (both when responding to queries and when recursing)
-* Send `NXDOMAIN`/`SOA` records in response to unreachable queries
+* Functionality is valid: the high-level stack (i.e. web browsing, etc.) works.
+* Recursively resolve queries, starting from the root DNS servers.
+* Parse and generate DNS packets and many record types.
+* Cache records and respond from the cache (both when responding to queries and when recursing).
+* Send `NXDOMAIN`/`SOA` records in response to unreachable queries.
 
 ### Build and run
 
@@ -76,9 +76,19 @@ DNS names are encoded using a compression scheme utilizing the fundamental compo
 * A sequence of labels ending in a pointer
 * A sequence of labels ending in a zero byte
 
-mango supports parsing names via `DnsPacketBodyParser.parse_name(&mut self) -> Option<String>`.
+Parsing a name: 
+```
+impl DnsPacketBodyParser
+    fn parse_name(&mut self) -> Option<String> {}
+}
+```
 
-More generally, packets can be parsed from a raw buffer off a socket via `DnsPacketParser::parse_packet_buffer(buf: &[u8]) -> DnsPacket`.
+More generally, packets can be parsed from a raw buffer off a socket:
+```rust
+impl DnsPacketParser {
+    fn parse_packet_buffer(buf: &[u8]) -> DnsPacket {}
+}
+```
 
 ### Packet generation
 
@@ -104,7 +114,6 @@ let output_packet = DnsPacketWriter::new()
         )
     ])
     .write();
-);
 ```
 
 These APIs output correct packets, including with trickier record encodings such as `HTTPS`. 
@@ -142,7 +151,7 @@ impl DnsResolver {
 }
 ```
 
-An explicit cache lookup can be performed:
+An explicit cache lookup:
 
 ```rust
 enum CacheLookupPolicy {
