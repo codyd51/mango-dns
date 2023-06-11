@@ -81,9 +81,9 @@ let output_packet = DnsPacketWriter::new()
             )),
         )
     )
-    .questions(&[&original_answer]),
+    .questions(&[&original_question])
     .answers(&[
-        DnsRecord::new_answer(
+        &DnsRecord::new_answer(
             "www.axleos.com",
             DnsRecordType::A,
             DnsRecordTtl(300),
