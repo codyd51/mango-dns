@@ -1,9 +1,6 @@
 <div align="center">
-  <img src="logo.png" width="200">
-  <h1>mango-dns</h1>
+  <img src="spread.svg">
 </div>
-
-`mango-dns` is a recursive DNS resolver.
 
 mango supports the common DNS record types:
 
